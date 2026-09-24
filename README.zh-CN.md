@@ -4,7 +4,7 @@
 
 中文 · [English](README.md) · [MIT 许可证](LICENSE)
 
-> **仓库状态：** 这是拆分后的独立本地仓库。新的 Python 和 npm 包名已经配置，尚未发布。下面的源码快速体验不依赖包仓库。已验证的能力与发布状态见[当前状态](docs/CURRENT_STATE.md)。
+> **仓库状态：** Fuju Trace 已有独立的公开源码仓库。新的 Python 和 npm 包名已经配置，尚未发布。下面的源码快速体验不依赖包仓库。已验证的能力与发布状态见[当前状态](docs/CURRENT_STATE.md)。
 
 ![Fuju Trace 回放控制台](docs/images/console-overview.png)
 
@@ -100,7 +100,7 @@ with connect(path="./fuju-trace-data", tenant_id=1) as db:
     print(db.search(text="盗刷", k=10))
 ```
 
-FastAPI、ARQ、Celery 应在每个进程启动时初始化一次、退出时关闭一次；具体做法见 [Python 服务端接入指南](docs/design/2026-07-14_python-service-integration.md)。Node/Electron 本地包需先构建 native 模块，再在 [`fuju-trace-node/`](fuju-trace-node/README.md) 执行 `npm run pack:verify`。
+FastAPI、ARQ、Celery 应在每个进程启动时初始化一次、退出时关闭一次；具体做法见 [Python DB 指南](fuju-trace-db-python/README.md)。Node/Electron 本地包需先构建 native 模块，再在 [`fuju-trace-node/`](fuju-trace-node/README.md) 执行 `npm run pack:verify`。
 
 **部署边界：** 嵌入式模式支持同一台机器上的多个进程共享**本地**数据目录。多台机器或跨主机容器应运行一个服务，通过 HTTP 接入；不要在网络文件系统上共享嵌入式数据目录。
 
@@ -126,7 +126,7 @@ PYTHONPATH=fuju-trace-sdk/python python3 fuju-trace-sdk/python/tests/test_sdk.py
 python3 scripts/check_release_versions.py
 ```
 
-各包构建、干净环境验证、升级测试和发布步骤见 [AGENTS.md](AGENTS.md)。包元数据中配置的主页地址不表示已经创建 Git 远端或发布了包。
+各包构建、干净环境验证、升级测试和发布步骤见 [AGENTS.md](AGENTS.md)。公开源码仓库不等于已经发布 Python 和 npm 包。
 
 ## 项目目录
 
@@ -136,7 +136,6 @@ python3 scripts/check_release_versions.py
 - [`fuju-trace-db-python/`](fuju-trace-db-python/)、[`fuju-trace-node/`](fuju-trace-node/)、[`fuju-trace-db-rs/`](fuju-trace-db-rs/) — 嵌入式 DB 包
 - [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — HTTP 和嵌入式 JSON 契约
 - [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — 当前实现与边界
-- [对外介绍口径](docs/analysis/2026-09-24_fuju-trace-positioning.md) — 可复用的话术与表述边界
 
 `fuju-rsi` 是独立项目。它的可选遥测插件在 Fuju Trace 可用时上报事件；不可用时写本地遥测日志。Fuju Trace 的运行不依赖 RSI。
 

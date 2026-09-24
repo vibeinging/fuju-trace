@@ -4,7 +4,7 @@
 
 [中文](README.zh-CN.md) · English · [MIT license](LICENSE)
 
-> **Repository status:** This is a separate local repository. The renamed Python and npm packages are configured but have not been published. The source quick start below works without a package registry. See [Current State](docs/CURRENT_STATE.md) for verified capabilities and release status.
+> **Repository status:** Fuju Trace now has its own public source repository. The renamed Python and npm packages are configured but have not been published. The source quick start below works without a package registry. See [Current State](docs/CURRENT_STATE.md) for verified capabilities and release status.
 
 ![Fuju Trace replay console](docs/images/console-overview.png)
 
@@ -100,7 +100,7 @@ with connect(path="./fuju-trace-data", tenant_id=1) as db:
     print(db.search(text="盗刷", k=10))
 ```
 
-For FastAPI, ARQ, or Celery, initialize once when each process starts and close once when it exits; see the [Python service integration guide](docs/design/2026-07-14_python-service-integration.md). For Node/Electron local tarballs, build the native package and run `npm run pack:verify` in [`fuju-trace-node/`](fuju-trace-node/README.md).
+For FastAPI, ARQ, or Celery, initialize once when each process starts and close once when it exits; see the [Python DB guide](fuju-trace-db-python/README.md). For Node/Electron local tarballs, build the native package and run `npm run pack:verify` in [`fuju-trace-node/`](fuju-trace-node/README.md).
 
 **Deployment boundary:** Embedded mode supports processes sharing one **local** data directory on the same machine. For multiple machines or hosts, run one service and connect over HTTP. Do not share an embedded data directory over a network filesystem.
 
@@ -126,7 +126,7 @@ PYTHONPATH=fuju-trace-sdk/python python3 fuju-trace-sdk/python/tests/test_sdk.py
 python3 scripts/check_release_versions.py
 ```
 
-Package-level build, clean-consumer checks, upgrade tests, and release steps are documented in [AGENTS.md](AGENTS.md). No Git remote or package publication is implied by the configured homepage and package metadata.
+Package-level build, clean-consumer checks, upgrade tests, and release steps are documented in [AGENTS.md](AGENTS.md). Publishing this source repository does not publish the Python and npm packages.
 
 ## Project map
 
@@ -136,7 +136,6 @@ Package-level build, clean-consumer checks, upgrade tests, and release steps are
 - [`fuju-trace-db-python/`](fuju-trace-db-python/), [`fuju-trace-node/`](fuju-trace-node/), [`fuju-trace-db-rs/`](fuju-trace-db-rs/) — embedded DB packages
 - [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — HTTP and embedded JSON contract
 - [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — current implementation and limits
-- [Fuju Trace positioning](docs/analysis/2026-09-24_fuju-trace-positioning.md) — reusable introduction and claim boundaries
 
 `fuju-rsi` is a separate project. Its optional telemetry plugin uses Fuju Trace when available and writes local telemetry logs when it is not; Fuju Trace has no runtime dependency on RSI.
 

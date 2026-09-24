@@ -1,10 +1,10 @@
 # Fuju Trace 当前态（唯一权威现状索引）
 
-> 更新：2026-09-25。本仓库从原 `yitrace` 工作树拆出 Trace 部分，目前是独立本地 Git 检出；尚未提交、推送或发布。优化实验、Benchmark、独立验收、Runtime、`fuju-tune` skill 与业务调优适配器在独立 `fuju-rsi` 仓库。原工作树保留不动，用作迁移核对。
+> 更新：2026-09-25。本仓库从原 `yitrace` 工作树拆出 Trace 部分，源码已提交到独立的公开 Git 仓库；Python 和 npm 包尚未发布。优化实验、Benchmark、独立验收、Runtime、`fuju-tune` skill 与业务调优适配器在独立 `fuju-rsi` 仓库。原工作树保留不动，用作迁移核对。
 
 当前仓库保留 Rust Trace 引擎、Python/TypeScript/Rust 打点 SDK、Node/Python/Rust embedded DB、OTLP/HTTP 入口和回放控制台。Python 发布包改为 `fuju-trace` / `fuju-trace-db`，npm 包改为 `@fuju/trace-sdk` / `@fuju/trace-db`，Rust crate 改为 `fuju-trace-*`。wire 事件格式与确定性 event_id 保持兼容。RSI 可通过公开 `/v1/ingest` 接口上报少量状态；Trace 不依赖 RSI。
 
-本地核对：`cargo test --offline` 在原引擎代码上通过（回环套接字测试在允许本地端口的环境执行）；拆分后的回放控制台构建与 2 项前端测试通过；`scripts/check_release_versions.py` 通过 29 项版本检查，当前源码版本 0.1.9。`scripts/package_release_artifacts.sh` 的 Rust DB 源码包路径现在先从干净检出构建回放页并同步到 `console_dist/`。跨平台 native 包、升级和发布仍需在确定仓库地址后按发布流程验证。
+本地核对：拆分后的 `cargo test --offline` 全量通过；回放控制台构建与 2 项前端测试通过；`scripts/check_release_versions.py` 通过 29 项版本检查，当前源码版本 0.1.9。`scripts/package_release_artifacts.sh` 的 Rust DB 源码包路径现在先从干净检出构建回放页并同步到 `console_dist/`。跨平台 native 包、升级和发布仍需按发布流程验证。
 
 以下保留原 2026-07-21 架构细节，性能数字和测试数量属于当时的快照。
 
@@ -27,7 +27,7 @@
 | `fuju-trace-sdk/python`、`fuju-trace-sdk/typescript`、`fuju-trace-sdk/rust` | 打点 SDK，确定性 event_id 与引擎逐字节一致。Rust SDK 是纯 std crate，适合只上报到 server 的 Rust agent。Python SDK 还提供服务端 embedded 接入层：`BufferedDbExporter` 后台单写线程、`SpoolDbExporter`/`SpoolConsumer` 落盘队列、`init_fuju_trace`/`shutdown_fuju_trace` 启停 helper、`fuju-trace consume-spool` CLI。 | 可用，各带测试；Python SDK clean consumer 验证覆盖 console script 和没有 `fuju-trace-db` 时的 fail-open |
 | `fuju-trace-node/`、`fuju-trace-db-python/`、`fuju-trace-db-rs/` | Node/Electron、Python、Rust 的嵌入式 DB 包。都通过 `EngineJsonApi` 进程内调用引擎，不直接解析 WAL/manifest/segment 文件。Python 侧已有 `fuju_trace.connect(url/path)`、`DbExporter`、FastAPI router 和 `fuju-trace-db serve` 入口；native 调用在 open/recover/route/flush/close 释放 GIL，避免长 IO 卡住 Python 线程。持久模式支持同机多个进程打开同一个本地 data dir：内部用 `.yitrace.open.lock.d/` 和 `.yitrace.write.lock.d/` 串行化 open/write，用 `.yitrace.readers/` reader pin 保护跨进程快照回收。 | 可用：ingest/search/trace/span/sessions/traceSearch/aggregate/storageStats/trajectory/diff/loop/task/annotation/dataset association/retention helpers 有包级测试；`scripts/package_mode_eval.sh` 固化包形态回归；Node `pack:verify` 在干净 consumer 验证 ESM/CJS/native-path 和版本一致；Python DB 最终 wheel 在干净 venv 验证 embedded/reopen/FastAPI/CLI server；tag CI 在 macOS arm64/x64、Linux arm64/x64、Windows x64 重复 native 产物安装；同机多进程 embedded 已有真实子进程测试，跨机器/网络盘共享 data dir 仍不支持 |
 
-**公开入口**：README 负责快速上手；`docs/design/2026-07-14_python-service-integration.md` 负责 Python/FastAPI/ARQ 服务端生命周期和模式选择；`docs/API_REFERENCE.md` 负责 HTTP / embedded API；本文负责说明当前实现边界。
+**公开入口**：README 负责快速上手；`fuju-trace-db-python/README.md` 介绍 Python/FastAPI 服务端接入；`docs/API_REFERENCE.md` 负责 HTTP / embedded API；本文负责说明当前实现边界。
 
 ## 2. 历史 / 非当前态（别当现状读）
 
@@ -53,7 +53,7 @@ openGauss 是华为 IP，用它做信创护城河等于把叙事控制权交给�
 
 ## 5. 已验证 vs 占位（诚实边界）
 
-**性能（本机单机 release，合成负载；详情见 [2026-09-25 优化复验](reports/2026-09-25_fuju-trace-search-ingest-optimization.md)）**：2 万折叠 span / 45,540 条 wire event、batch 512 的生成加写入为 5,308 span/s（3.768 s），显式尾部 flush 再用 2.895 s，合计约 3,002 span/s；2 万 span 的重复 BM25 高频查询 P50 为 0.679 ms，结构化宽范围分页 P50 为 0.337 ms。5 千个 128 维向量建图：逐条 1,999 点/s，批量 256 为 3,478 点/s。上述数字来自同一台开发机，系统页缓存未清空、单并发、合成数据，不代表生产容量。关键实现：段级 key Bloom、BM25 block-max、rollup 行级分页、独立 sidecar 并行保存；批量大小和查询选择性会显著影响结果。
+**性能（本机单机 release，合成负载）**：2 万折叠 span / 45,540 条 wire event、batch 512 的生成加写入为 5,308 span/s（3.768 s），显式尾部 flush 再用 2.895 s，合计约 3,002 span/s；2 万 span 的重复 BM25 高频查询 P50 为 0.679 ms，结构化宽范围分页 P50 为 0.337 ms。5 千个 128 维向量建图：逐条 1,999 点/s，批量 256 为 3,478 点/s。上述数字来自同一台开发机，系统页缓存未清空、单并发、合成数据，不代表生产容量。关键实现：段级 key Bloom、BM25 block-max、rollup 行级分页、独立 sidecar 并行保存；批量大小和查询选择性会显著影响结果。
 
 **已是真的（有测试）**：确定性 event_id（跨语言逐字节一致）、四源读时折叠、快照隔离、崩溃重放幂等（含 upgrade 重叠窗口）、时间分层 compaction、重启不丢；中文 BM25 多概念召回完胜子串；**纯 Rust 中文词级分词**（词典 DAG + 最大概率 DP，jieba 全量词典内嵌默认装、引擎默认用，歧义"研究生命→研究/生命"判对、自有词典叠加、接 BM25 端到端，8 测）；自研磁盘型多层 HNSW + 带过滤 ANN 召回表驱动实测（1% 选择性 post-filter 0.17 / in-graph 1.00，到 20% 收敛）；列式段谓词+投影下推；端到端 SDK/OTLP→HTTP→折叠→检索/eval/成本。
 

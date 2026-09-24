@@ -31,7 +31,7 @@ Fuju 有两类运行方式：独立服务和嵌入式。嵌入式目前有 Node 
 嵌入式包不是直接读文件。它们都把 Rust engine 加载到当前进程，再调用同一套 `EngineJsonApi`。
 所以本文里的请求体、响应字段、`readPlan`、attrs 过滤、trace/span 详情等契约，也适用于嵌入式包的高级方法或 `route_json` 风格方法。
 嵌入式支持同机多个进程打开同一个本地 data dir；引擎内部会串行化 open/write，并用 reader pin 保护跨进程快照回收。多台机器、网络文件系统或跨主机容器共享同一个 data dir 时，应改为一个 Fuju server 进程，其他 worker 走 HTTP。
-Python/FastAPI/ARQ 服务端如何管理进程生命周期、选择 buffered/spool/http 模式，见 [Python 服务端接入指南](design/2026-07-14_python-service-integration.md)。
+Python/FastAPI/ARQ 服务端如何管理进程生命周期、选择 buffered/spool/http 模式，见 [Python DB 指南](../fuju-trace-db-python/README.md)。
 
 对外推荐顺序：
 

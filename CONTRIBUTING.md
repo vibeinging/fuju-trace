@@ -145,11 +145,9 @@ cargo run -p fuju-trace-engine --release --example bench_qps
 ## 文档
 
 - `docs/CURRENT_STATE.md` — **唯一权威现状索引**(改了代码请同步更新这篇)
-- `docs/design/` — 设计文档(当前态 + 历史溯源)
-- `docs/analysis/` — 分析(性能/扩展性/竞品)
-- `docs/research/` — 调研
+- `docs/API_REFERENCE.md` — 对外 API 契约
 
-改了功能,请同步改对应文档。`docs/design/appendix-*` 是历史过程产物,非当前态,**别改也别参考为现状**。
+改了功能,请同步改对应公开文档。内部过程文档不作为公开仓库的当前能力依据。
 
 ## 问题 / 讨论
 

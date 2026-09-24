@@ -127,7 +127,7 @@ shutdown_fuju_trace()  # 等待队列 flush，并关闭 embedded DB
 
 这里的生命周期是**每个进程一次**：进程启动时初始化，所有请求和任务复用 `runtime.tracer`，进程退出时关闭。不要在每个请求、Agent run 或查询里调用 `init_fuju_trace()`；也不要在单个请求结束时调用 `tr.close()`，否则会关闭整个进程共用的 exporter。
 
-FastAPI、ARQ 的完整启动钩子和模式选择见 [Python 服务端接入指南](../../docs/design/2026-07-14_python-service-integration.md)。
+FastAPI、ARQ 也按上述每进程生命周期接入；FastAPI 路由挂载示例见 [Python DB 指南](../../fuju-trace-db-python/README.md)。
 
 默认 `fail_open=True`。如果 native 包缺失、data dir 被锁、恢复失败，`init_fuju_trace(...)` 会返回 no-op tracer，主服务继续启动；`runtime.enabled == False`，`runtime.error` 里保留原因。
 
