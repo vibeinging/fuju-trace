@@ -1,0 +1,40 @@
+{
+  "name": "@fuju/trace-db-linux-x64-gnu",
+  "version": "0.1.9",
+  "cpu": [
+    "x64"
+  ],
+  "main": "fuju-trace-db.linux-x64-gnu.node",
+  "files": [
+    "fuju-trace-db.linux-x64-gnu.node"
+  ],
+  "description": "Embedded Fuju Trace database for Node.js and Electron",
+  "keywords": [
+    "ai",
+    "agent",
+    "observability",
+    "trace",
+    "database",
+    "electron",
+    "node-api"
+  ],
+  "homepage": "https://github.com/vibeinging/fuju-trace#readme",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vibeinging/fuju-trace.git",
+    "directory": "fuju-trace-node"
+  },
+  "bugs": {
+    "url": "https://github.com/vibeinging/fuju-trace/issues"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

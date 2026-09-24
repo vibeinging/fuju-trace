@@ -1,0 +1,13 @@
+[package]
+name = "fuju-trace"
+version = "0.1.9"
+edition = "2021"
+license = "MIT"
+rust-version = "1.80"
+description = "Fuju Trace instrumentation SDK for Rust agents"
+readme = "README.md"
+repository = "https://github.com/vibeinging/fuju-trace"
+keywords = ["tracing", "ai-agents", "observability", "opentelemetry"]
+categories = ["development-tools::debugging"]
+
+[dependencies]

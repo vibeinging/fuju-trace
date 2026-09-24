@@ -1,0 +1,227 @@
+// Mock 数据层：确定性生成「上千会话」+ 大 trace，证明虚拟滚动 + 游标分页扛得住量。
+// 真实部署把这个换成 httpApi（见 http.ts），上层组件/hook 不动。
+
+import type { SearchHit, Span, SpanDetail, SpanKind, Status, Step, TraceApi, TraceSummary, SessionSummary } from './types'
+
+const SESSION_COUNT = 4000 // 故意上千：试虚拟滚动与分页
+const PAGE_LIMIT_DEFAULT = 50
+
+// 确定性伪随机（splitmix32 变体），同 seed 可复现。
+function rng(seed: number) {
+  let s = seed >>> 0
+  return () => {
+    s = (s + 0x9e3779b9) >>> 0
+    let t = s
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+const KINDS: SpanKind[] = ['llm', 'tool', 'chain', 'retriever', 'agent']
+const TOPICS = [
+  '反洗钱可疑交易排查', '信用卡盗刷共性分析', '理财合规话术检查', '对公账户结构对比',
+  '本月GMV查询', '逾期率风险分级', '渠道流失归因', '反欺诈规则回测',
+  '客诉根因聚类', '高净值客户资产诊断', '营销ROI归因', '现金流需求预测',
+]
+const MODELS = ['Qwen2.5-72B', 'Qwen2.5-7B']
+
+function pick<T>(r: () => number, xs: T[]): T {
+  return xs[Math.floor(r() * xs.length)]
+}
+function statusOf(r: () => number): Status {
+  const v = r()
+  return v < 0.08 ? 'error' : v < 0.11 ? 'run' : 'ok'
+}
+
+// 会话元数据（轮数、标题、时间）由 sessionId 确定性派生。
+function sessionMeta(i: number): SessionSummary {
+  const r = rng(i * 2654435761)
+  const turnCount = r() < 0.18 ? 2 + Math.floor(r() * (r() < 0.1 ? 48 : 6)) : 1 // ~18% 多轮，少数会话几十轮
+  const title = pick(r, TOPICS)
+  const status = statusOf(r)
+  const startedAt = 1_750_000_000_000 - i * 37_000 - Math.floor(r() * 30_000)
+  let totalCost = 0
+  for (let t = 0; t < turnCount; t++) totalCost += 0.005 + r() * 0.06
+  return {
+    sessionId: `sess-${(100000 + i).toString(36)}`,
+    title,
+    turnCount,
+    totalCost: Math.round(totalCost * 1000) / 1000,
+    status,
+    startedAt,
+    firstTraceId: `tr-${i}-0`,
+  }
+}
+
+function turnsOf(sessionId: string, i: number, turnCount: number): TraceSummary[] {
+  const r = rng(i * 40503 + 7)
+  return Array.from({ length: turnCount }, (_, t) => {
+    const status = t === turnCount - 1 ? 'ok' : statusOf(r)
+    const spanCount = 4 + Math.floor(r() * (r() < 0.05 ? 1200 : 40)) // 个别 trace 上千 span
+    const inTok = 200 + Math.floor(r() * 1800)
+    const outTok = 40 + Math.floor(r() * 500)
+    return {
+      traceId: `tr-${i}-${t}`,
+      sessionId,
+      turnIndex: t,
+      name: `${pick(r, TOPICS)}${turnCount > 1 ? ` · 第${t + 1}步` : ''}`,
+      durMs: 800 + Math.floor(r() * 18000),
+      cost: Math.round((0.005 + r() * 0.06) * 1000) / 1000,
+      inTok,
+      outTok,
+      spanCount,
+      status,
+    }
+  })
+}
+
+// 由 traceId 解析回 (i, t)，再确定性生成 spans。
+function spansOf(traceId: string): { summary: TraceSummary; spans: Span[] } {
+  const m = /^tr-(\d+)-(\d+)$/.exec(traceId)
+  const i = m ? +m[1] : 0
+  const t = m ? +m[2] : 0
+  const meta = sessionMeta(i)
+  const summary = turnsOf(meta.sessionId, i, meta.turnCount)[t]
+  const r = rng((i * 131 + t) * 2246822519)
+  const n = summary.spanCount
+  const spans: Span[] = []
+  // 一棵串行推进的调用树：root(agent) → 子步按执行顺序从左到右排，子窗口落在父窗口内。
+  const root: Span = {
+    id: `${traceId}-s0`, parentId: null, kind: 'agent', name: 'agent.workflow',
+    spanName: 'agent.workflow', displayName: '工作流 Agent', actorId: 'agent:workflow',
+    startMs: 0, durMs: summary.durMs, status: summary.status, cost: summary.cost, depth: 0,
+  }
+  spans.push(root)
+  // 每个节点带 cursor：下一个子步的起点。兄弟依次排开，形成从左到右的运行路径。
+  const stack: { id: string; depth: number; start: number; end: number; cursor: number }[] =
+    [{ id: root.id, depth: 0, start: 0, end: summary.durMs, cursor: 0 }]
+  for (let k = 1; k < n; k++) {
+    // 父窗口放不下更多子步时退栈；根也放满则提前收尾。
+    while (stack.length > 1) {
+      const p = stack[stack.length - 1]
+      if (p.end - p.cursor >= 60) break
+      stack.pop()
+    }
+    const parent = stack[stack.length - 1]
+    if (parent.end - parent.cursor < 40) break
+    const kind = pick(r, KINDS)
+    const avail = parent.end - parent.cursor
+    // 按剩余步数分摊父窗口：兄弟依次排开、嵌套逐渐填满，路径铺满整个时间轴。
+    const share = avail / Math.min(Math.max(1, n - k), 6)
+    const dur = Math.max(20, Math.floor(share * (0.6 + r() * 0.8)))
+    const gap = Math.floor(share * r() * 0.12)
+    const start = Math.min(parent.end - dur, parent.cursor + gap)
+    const st: Status = r() < 0.04 ? 'error' : 'ok'
+    const inTok = kind === 'llm' ? 200 + Math.floor(r() * 1800) : undefined
+    const outTok = kind === 'llm' ? 40 + Math.floor(r() * 500) : undefined
+    const sp: Span = {
+      id: `${traceId}-s${k}`,
+      parentId: parent.id,
+      kind,
+      name: `${kind === 'llm' ? 'LLM 调用' : kind === 'tool' ? '工具调用' : kind === 'retriever' ? '向量检索' : kind === 'chain' ? '推理链' : '子 agent'} #${k}`,
+      startMs: start,
+      durMs: dur,
+      status: st,
+      cost: Math.round(r() * 0.02 * 1000) / 1000,
+      inTok,
+      outTok,
+      model: kind === 'llm' ? pick(r, MODELS) : undefined,
+      depth: parent.depth + 1,
+    }
+    spans.push(sp)
+    parent.cursor = start + dur
+    // 深入子窗口或回到上层排兄弟：嵌套概率随规模缩放，小 trace 保持扁平、路径铺满时间轴。
+    const nestP = n > 12 ? 0.45 : n > 6 ? 0.3 : 0.12
+    if (r() < nestP && stack.length < 8) {
+      stack.push({ id: sp.id, depth: sp.depth, start, end: start + dur, cursor: start })
+    } else if (stack.length > 1 && r() < 0.7) {
+      stack.pop()
+    }
+  }
+  return { summary, spans }
+}
+
+function delay<T>(v: T, ms = 80): Promise<T> {
+  return new Promise((res) => setTimeout(() => res(v), ms))
+}
+
+export const mockApi: TraceApi = {
+  async listSessions({ cursor, limit = PAGE_LIMIT_DEFAULT, filter }) {
+    const start = cursor ? parseInt(cursor, 10) : 0
+    const items: SessionSummary[] = []
+    let i = start
+    while (items.length < limit && i < SESSION_COUNT) {
+      const s = sessionMeta(i)
+      if (!filter || s.title.includes(filter) || s.sessionId.includes(filter)) items.push(s)
+      i++
+    }
+    const nextCursor = i < SESSION_COUNT ? String(i) : null
+    return delay({ items, nextCursor, total: SESSION_COUNT })
+  },
+  async listTurns(sessionId) {
+    const m = /^sess-([0-9a-z]+)$/.exec(sessionId)
+    const i = m ? parseInt(m[1], 36) - 100000 : 0
+    const meta = sessionMeta(i)
+    return delay(turnsOf(sessionId, i, meta.turnCount))
+  },
+  async getTrace(traceId) {
+    return delay(spansOf(traceId), 120)
+  },
+  async getSpanDetail(traceId, spanId) {
+    const r = rng(spanId.length * 99 + traceId.length)
+    const rule = `R${10 + Math.floor(r() * 20)}`
+    const level = ['低', '中', '高', '极高'][Math.floor(r() * 4)]
+    const verdicts = [
+      `研判结论：命中反洗钱规则 ${rule}，资金链路存在 ${level} 风险环，建议人工复核并暂缓放款。`,
+      `研判结论：本批账户触发规则 ${rule}，账户 ${82_000 + Math.floor(r() * 900)} 交易对手方高度重合，风险等级 ${level}，建议列入观察名单。`,
+      '研判结论：未触发既有规则，但短时高频小额试探特征明显，建议补充第二数据源后复审。',
+      `研判结论：确认存在盗刷特征，命中规则 ${rule}，已冻结涉案账户并生成工单 FZ-${1000 + Math.floor(r() * 8000)}。`,
+    ]
+    const d: SpanDetail = {
+      id: spanId,
+      input: `用户/上游输入（${spanId}）：对该批可疑账户做资金链路追踪，关联近 90 天交易对手方，输出研判结论与处置建议。`,
+      output: verdicts[Math.floor(r() * verdicts.length)],
+    }
+    return delay(d, 60)
+  },
+  async getSteps(traceId) {
+    const { spans } = spansOf(traceId)
+    const steps: Step[] = spans.map((s, i) => ({
+      id: s.id,
+      kind: s.kind,
+      name: s.name,
+      spanName: s.spanName,
+      displayName: s.displayName,
+      actorId: s.actorId,
+      agentName: s.agentName,
+      toolName: s.toolName,
+      status: s.status,
+      durMs: s.durMs,
+      inTok: s.inTok ?? 0,
+      outTok: s.outTok ?? 0,
+      model: s.model,
+      input: `第 ${i + 1} 步输入：` + '对该批可疑账户做资金链路追踪。',
+      output: s.status === 'error' ? '执行报错：KeyError 列名拼写' : '已完成，返回观察结果并更新状态。',
+    }))
+    return delay(steps, 100)
+  },
+  async searchSpans(query, k) {
+    // 简化的中文召回：扫前若干会话，标题命中 query 的当命中，按相关度（命中位置）排序。
+    const hits: SearchHit[] = []
+    const q = query.trim()
+    for (let i = 0; i < 600 && hits.length < k; i++) {
+      const s = sessionMeta(i)
+      if (q && !s.title.includes(q)) continue
+      hits.push({
+        traceId: s.firstTraceId,
+        spanId: `${s.firstTraceId}-s0`,
+        score: Math.round((0.95 - hits.length * 0.03) * 100) / 100,
+        status: s.status === 'error' ? 'error' : 'ok',
+        agentName: s.title,
+        snippet: `${s.title} … 命中「${q}」`,
+      })
+    }
+    return delay(hits, 120)
+  },
+}

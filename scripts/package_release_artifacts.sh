@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# Build release package artifacts in the same way the tag-only GitHub Action does.
+#
+# This script is intentionally local-runner friendly: run it before creating a
+# tag so the GitHub Action only repeats a path that has already passed locally.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_DIR="${FUJU_TRACE_RELEASE_DIST:-"$ROOT_DIR/dist/tag-package"}"
+MODE="all"
+TARGET=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sdk-only)
+      MODE="sdk"
+      shift
+      ;;
+    --native-only)
+      MODE="native"
+      shift
+      ;;
+    --target)
+      TARGET="${2:-}"
+      if [[ -z "$TARGET" ]]; then
+        echo "--target requires a value" >&2
+        exit 2
+      fi
+      MODE="target"
+      shift 2
+      ;;
+    *)
+      echo "未知参数: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+run() {
+  echo
+  echo "==> $*"
+  "$@"
+}
+
+want() {
+  local target="$1"
+  case "$MODE" in
+    all)
+      return 0
+      ;;
+    sdk)
+      [[ "$target" == "python-sdk" || "$target" == "typescript-sdk" || "$target" == "rust-sdk" || "$target" == "rust-db-source" ]]
+      ;;
+    native)
+      [[ "$target" == "python-db" || "$target" == "node-db" ]]
+      ;;
+    target)
+      [[ "$target" == "$TARGET" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+copy_dir_files() {
+  local from="$1"
+  local to="$2"
+  mkdir -p "$to"
+  find "$from" -maxdepth 1 -type f -exec cp {} "$to"/ \;
+}
+
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR"
+
+run python "$ROOT_DIR/scripts/check_release_versions.py"
+
+echo "Packaging Fuju Trace release artifacts into $OUT_DIR"
+echo "Mode: $MODE"
+if [[ -n "$TARGET" ]]; then
+  echo "Target: $TARGET"
+fi
+
+if [[ "$MODE" == "all" || "$MODE" == "sdk" ]]; then
+  run "$ROOT_DIR/scripts/package_mode_eval.sh" --skip-node --skip-python-db --skip-rust-db
+fi
+
+if want python-sdk; then
+  if [[ "$MODE" == "target" ]]; then
+    run python "$ROOT_DIR/fuju-trace-sdk/python/tests/test_sdk.py"
+  fi
+
+  echo
+  echo "==> Python SDK wheel/sdist"
+  # 直接写入本次产物目录，保留开发者已有的源码目录 dist/。
+  run python -m build "$ROOT_DIR/fuju-trace-sdk/python" --outdir "$OUT_DIR/python-sdk"
+  run python "$ROOT_DIR/scripts/verify_python_sdk_consumer.py" --wheel-dir "$OUT_DIR/python-sdk"
+fi
+
+if want python-db; then
+  echo
+  echo "==> Python embedded DB wheel"
+  pushd "$ROOT_DIR/fuju-trace-db-python" >/dev/null
+  # MATURIN_BUILD_ARGS is used by CI to request manylinux wheels on Linux.
+  MATURIN_ARGS=("--interpreter" "$(command -v python)")
+  if [[ -n "${MATURIN_BUILD_ARGS:-}" ]]; then
+    # shellcheck disable=SC2206
+    EXTRA_MATURIN_ARGS=(${MATURIN_BUILD_ARGS})
+    MATURIN_ARGS+=("${EXTRA_MATURIN_ARGS[@]}")
+  elif [[ "$(uname -s)" == "Darwin" ]]; then
+    PYTHON_MACHINE="$(python -c 'import platform; print(platform.machine())')"
+    RUST_HOST="$(rustc -vV | awk '/^host:/ { print $2 }')"
+    PYTHON_TARGET=""
+    case "$PYTHON_MACHINE" in
+      arm64|aarch64)
+        PYTHON_TARGET="aarch64-apple-darwin"
+        ;;
+      x86_64|amd64)
+        PYTHON_TARGET="x86_64-apple-darwin"
+        ;;
+    esac
+    if [[ -n "$PYTHON_TARGET" && "$PYTHON_TARGET" != "$RUST_HOST" ]]; then
+      echo "Python 架构 $PYTHON_MACHINE 与 Rust host $RUST_HOST 不同，使用 target $PYTHON_TARGET"
+      MATURIN_ARGS+=("--target" "$PYTHON_TARGET")
+    fi
+  fi
+  run python -m maturin build --release "${MATURIN_ARGS[@]}" --out "$OUT_DIR/python-db"
+  popd >/dev/null
+  run python "$ROOT_DIR/scripts/verify_python_db_wheel.py" --wheel-dir "$OUT_DIR/python-db"
+fi
+
+if want typescript-sdk; then
+  if [[ "$MODE" == "target" ]]; then
+    pushd "$ROOT_DIR/fuju-trace-sdk/typescript" >/dev/null
+    run npm test
+    popd >/dev/null
+  fi
+
+  echo
+  echo "==> TypeScript SDK npm tarball"
+  pushd "$ROOT_DIR/fuju-trace-sdk/typescript" >/dev/null
+  run npm run build
+  mkdir -p "$OUT_DIR/typescript-sdk"
+  run npm pack --pack-destination "$OUT_DIR/typescript-sdk"
+  popd >/dev/null
+fi
+
+if want rust-sdk; then
+  if [[ "$MODE" == "target" ]]; then
+    run cargo test --offline --manifest-path "$ROOT_DIR/fuju-trace-sdk/rust/Cargo.toml"
+  fi
+
+  echo
+  echo "==> Rust SDK crate"
+  run cargo package --manifest-path "$ROOT_DIR/fuju-trace-sdk/rust/Cargo.toml" --allow-dirty
+  RUST_SDK_VERSION="$(python -c 'import pathlib, sys, tomllib; print(tomllib.loads((pathlib.Path(sys.argv[1]) / "fuju-trace-sdk/rust/Cargo.toml").read_text())["package"]["version"])' "$ROOT_DIR")"
+  mkdir -p "$OUT_DIR/rust-sdk"
+  cp "$ROOT_DIR/fuju-trace-sdk/rust/target/package/fuju-trace-${RUST_SDK_VERSION}.crate" "$OUT_DIR/rust-sdk"/
+fi
+
+if want rust-db-source; then
+  echo
+  echo "==> Rust embedded DB source bundle"
+  # 干净检出不会带 console_dist；先构建并同步，避免发布没有回放页的引擎源码包。
+  pushd "$ROOT_DIR/fuju-trace-console" >/dev/null
+  run npm ci
+  run env VITE_API=http npm run build
+  popd >/dev/null
+  run python "$ROOT_DIR/scripts/sync_console.py"
+  RUST_DB_VERSION="$(python -c 'import pathlib, sys, tomllib; print(tomllib.loads((pathlib.Path(sys.argv[1]) / "fuju-trace-db-rs/Cargo.toml").read_text())["package"]["version"])' "$ROOT_DIR")"
+  mkdir -p "$OUT_DIR/rust-db"
+  (
+    cd "$ROOT_DIR"
+    COPYFILE_DISABLE=1 tar \
+      --exclude "*/target" \
+      --exclude "*/node_modules" \
+      --exclude "*/.pytest_cache" \
+      --exclude "*/__pycache__" \
+      -czf "$OUT_DIR/rust-db/fuju-trace-db-rs-${RUST_DB_VERSION}-source.tar.gz" \
+      fuju-trace-db-rs \
+      fuju-trace-engine
+  )
+fi
+
+if want node-db; then
+  echo
+  echo "==> Node embedded DB local native tarballs"
+  pushd "$ROOT_DIR/fuju-trace-node" >/dev/null
+  run npm run build
+  run npm run pack:verify
+  mkdir -p "$OUT_DIR/node-db"
+  cp dist/*.tgz dist/pack-manifest.json "$OUT_DIR/node-db"/
+  popd >/dev/null
+fi
+
+echo
+echo "==> Checksums"
+(
+  cd "$OUT_DIR"
+  if ! find . -type f ! -name SHA256SUMS.txt | grep -q .; then
+    echo "No artifacts were produced for mode=$MODE target=${TARGET:-all}" >&2
+    exit 1
+  fi
+  python - <<'PY'
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+rows = []
+for path in sorted(Path(".").rglob("*")):
+    if not path.is_file() or path.name == "SHA256SUMS.txt":
+        continue
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    rows.append(f"{digest}  {path.as_posix()}")
+Path("SHA256SUMS.txt").write_text("\n".join(rows) + ("\n" if rows else ""), encoding="utf-8")
+PY
+)
+
+echo
+echo "Release artifacts ready:"
+find "$OUT_DIR" -maxdepth 3 -type f | sort

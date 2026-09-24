@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# Fuju Trace 主线 eval 总入口。
+#
+# 默认只跑单机/嵌入式主线能承受的风险用例：
+#   - 风险矩阵 eval
+#   - 主 eval harness
+#   - Rust 引擎离线测试
+#
+# 可选参数：
+#   --packages       额外跑 package-mode eval 和控制台测试
+#   --pack           额外跑 @fuju/trace-db 本地打包验证
+#   --crash          额外跑 kill -9 崩溃恢复测试（默认 3 轮，可用 --crash-rounds N）
+#   --sidecar-crash  额外跑派生索引原子替换窗口的 kill -9 测试
+#   --upgrade        额外跑 v0.1.2 数据目录升级测试
+#   --scale          额外跑 10k span 真实数据目录 + 独立进程重启查询
+#   --heavy          等同于 --packages --pack --crash --sidecar-crash --upgrade --scale
+#   --skip-engine    跳过 Rust 引擎全量离线测试，只跑 eval 测试
+#   --skip-node      在 --packages/--pack 下跳过 Node 嵌入式 DB
+#   --skip-python-db 在 --packages 下跳过 Python 嵌入式 DB
+#   --skip-rust-db   在 --packages 下跳过 Rust 嵌入式 DB crate
+#   --skip-sdk       在 --packages 下跳过 Python/TypeScript SDK
+#   --skip-ui        在 --packages 下跳过控制台测试和构建
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_ENGINE=1
+RUN_PACKAGES=0
+RUN_PACK=0
+RUN_CRASH=0
+RUN_SIDECAR_CRASH=0
+RUN_UPGRADE=0
+RUN_SCALE=0
+RUN_NODE=1
+RUN_PYTHON_DB=1
+RUN_RUST_DB=1
+RUN_SDK=1
+RUN_UI=1
+CRASH_ROUNDS=3
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --packages)
+      RUN_PACKAGES=1
+      shift
+      ;;
+    --pack)
+      RUN_PACK=1
+      shift
+      ;;
+    --crash)
+      RUN_CRASH=1
+      shift
+      ;;
+    --sidecar-crash)
+      RUN_SIDECAR_CRASH=1
+      shift
+      ;;
+    --upgrade)
+      RUN_UPGRADE=1
+      shift
+      ;;
+    --scale)
+      RUN_SCALE=1
+      shift
+      ;;
+    --heavy)
+      RUN_PACKAGES=1
+      RUN_PACK=1
+      RUN_CRASH=1
+      RUN_SIDECAR_CRASH=1
+      RUN_UPGRADE=1
+      RUN_SCALE=1
+      shift
+      ;;
+    --crash-rounds)
+      CRASH_ROUNDS="$2"
+      shift 2
+      ;;
+    --skip-engine)
+      RUN_ENGINE=0
+      shift
+      ;;
+    --skip-node)
+      RUN_NODE=0
+      shift
+      ;;
+    --skip-python-db)
+      RUN_PYTHON_DB=0
+      shift
+      ;;
+    --skip-rust-db)
+      RUN_RUST_DB=0
+      shift
+      ;;
+    --skip-sdk)
+      RUN_SDK=0
+      shift
+      ;;
+    --skip-ui)
+      RUN_UI=0
+      shift
+      ;;
+    *)
+      echo "未知参数: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+run() {
+  echo
+  echo "==> $*"
+  "$@"
+}
+
+need_dir() {
+  if [[ ! -d "$1" ]]; then
+    echo "跳过，缺少目录: $1" >&2
+    return 1
+  fi
+  return 0
+}
+
+need_dir "$ROOT_DIR/fuju-trace-engine" >/dev/null
+
+run cargo test --offline --manifest-path "$ROOT_DIR/fuju-trace-engine/Cargo.toml" -p fuju-trace-engine --test risk_eval_matrix -- --test-threads=1
+run cargo test --offline --manifest-path "$ROOT_DIR/fuju-trace-engine/Cargo.toml" -p fuju-trace-engine --test eval_harness -- --test-threads=1
+
+if [[ "$RUN_ENGINE" -eq 1 ]]; then
+  run cargo test --offline --manifest-path "$ROOT_DIR/fuju-trace-engine/Cargo.toml"
+fi
+
+if [[ "$RUN_PACKAGES" -eq 1 ]]; then
+  if [[ "$RUN_SDK" -eq 1 && "$RUN_PYTHON_DB" -eq 1 && "$RUN_RUST_DB" -eq 1 && "$RUN_NODE" -eq 1 ]]; then
+    # macOS Bash 3.2 + `set -u` treats an expanded empty array as unbound.
+    run "$ROOT_DIR/scripts/package_mode_eval.sh"
+  else
+    PACKAGE_ARGS=()
+    if [[ "$RUN_SDK" -eq 0 ]]; then
+      PACKAGE_ARGS+=("--skip-sdk")
+    fi
+    if [[ "$RUN_PYTHON_DB" -eq 0 ]]; then
+      PACKAGE_ARGS+=("--skip-python-db")
+    fi
+    if [[ "$RUN_RUST_DB" -eq 0 ]]; then
+      PACKAGE_ARGS+=("--skip-rust-db")
+    fi
+    if [[ "$RUN_NODE" -eq 0 ]]; then
+      PACKAGE_ARGS+=("--skip-node")
+    fi
+    run "$ROOT_DIR/scripts/package_mode_eval.sh" "${PACKAGE_ARGS[@]}"
+  fi
+
+  if [[ "$RUN_UI" -eq 1 ]]; then
+    if need_dir "$ROOT_DIR/fuju-trace-console"; then
+      pushd "$ROOT_DIR/fuju-trace-console" >/dev/null
+      if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scripts.test ? 0 : 1)'; then
+        run npm test
+      else
+        echo "跳过控制台测试：package.json 未定义 test 脚本"
+      fi
+      run npm run build
+      popd >/dev/null
+    fi
+  fi
+fi
+
+if [[ "$RUN_PACK" -eq 1 && "$RUN_NODE" -eq 1 ]]; then
+  if need_dir "$ROOT_DIR/fuju-trace-node"; then
+    pushd "$ROOT_DIR/fuju-trace-node" >/dev/null
+    run npm run pack:verify
+    popd >/dev/null
+  fi
+fi
+
+if [[ "$RUN_CRASH" -eq 1 ]]; then
+  pushd "$ROOT_DIR/fuju-trace-engine" >/dev/null
+  run cargo build -p fuju-trace-engine --example server_durable --release
+  popd >/dev/null
+  pushd "$ROOT_DIR" >/dev/null
+  run ./tests/crash_recovery_kill9.sh "$CRASH_ROUNDS"
+  popd >/dev/null
+fi
+
+if [[ "$RUN_SIDECAR_CRASH" -eq 1 ]]; then
+  run "$ROOT_DIR/tests/sidecar_rebuild_kill9.sh"
+fi
+
+if [[ "$RUN_UPGRADE" -eq 1 ]]; then
+  run "$ROOT_DIR/tests/upgrade_012_to_current.sh"
+fi
+
+if [[ "$RUN_SCALE" -eq 1 ]]; then
+  SCALE_REPORT="${TMPDIR:-/tmp}/fuju-trace-scale-eval-$$.md"
+  run "$ROOT_DIR/scripts/bench_scale.sh" --smoke --cold-queries --report "$SCALE_REPORT"
+  OPEN_MS="$(awk '/^- openAndRecoverMillis:/ { print $3; exit }' "$SCALE_REPORT")"
+  OPEN_MAX_MS="${FUJU_TRACE_SCALE_OPEN_MAX_MS:-100}"
+  if [[ -z "$OPEN_MS" ]]; then
+    echo "启动性能回归: 报告缺少 openAndRecoverMillis" >&2
+    exit 1
+  fi
+  if ! awk -v actual="$OPEN_MS" -v limit="$OPEN_MAX_MS" 'BEGIN { exit !(actual <= limit) }'; then
+    echo "启动性能回归: ${OPEN_MS}ms > ${OPEN_MAX_MS}ms" >&2
+    exit 1
+  fi
+  echo "启动性能通过: ${OPEN_MS}ms <= ${OPEN_MAX_MS}ms"
+  rm -f "$SCALE_REPORT" "${SCALE_REPORT%.md}_generate.md"
+fi
+
+echo
+echo "eval 全部通过"

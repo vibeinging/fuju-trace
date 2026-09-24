@@ -1,0 +1,234 @@
+// SDK 测试。`node test/test_sdk.ts`（Node 23+ 原生跑 .ts）。
+import { BatchExporter, CollectingExporter, EventType, HttpExporter, Tracer, eventId, toWire, type Exporter, type SpanEvent } from "../src/index.ts";
+
+let passed = 0;
+function check(cond: boolean, msg: string): void {
+  if (!cond) throw new Error("FAIL: " + msg);
+}
+function test(name: string, fn: () => void): void {
+  fn();
+  passed++;
+  console.log("OK  " + name);
+}
+
+// 引擎基准值：cargo run -p fuju-trace-core --example print_event_id
+test("event_id 与引擎逐字节一致（含中文）", () => {
+  check(eventId("demo-span", 7n, EventType.SpanEnd) === 16098495313036060864n, "demo-span");
+  check(eventId("1002-1", 1n, EventType.SpanStart) === 3941713543033365492n, "1002-1");
+  check(eventId("反洗钱-1", 3n, EventType.Attr) === 13462389519714918643n, "反洗钱");
+});
+
+test("event_id 确定且敏感", () => {
+  check(eventId("s", 7n, EventType.SpanEnd) === eventId("s", 7n, EventType.SpanEnd), "确定");
+  check(eventId("s", 7n, EventType.SpanEnd) !== eventId("s", 8n, EventType.SpanEnd), "seq");
+  check(eventId("s", 7n, EventType.SpanEnd) !== eventId("s", 7n, EventType.SpanStart), "类型");
+  check(eventId("s", 7n, EventType.SpanEnd) !== eventId("t", 7n, EventType.SpanEnd), "身份");
+});
+
+test("span 产出 start/log/end", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1);
+  tr.trace("反洗钱筛查", (t) => {
+    t.span("调用LLM研判", (s) => {
+      s.log("研判结论 需人工复核");
+      s.setStatus(0);
+    });
+  });
+  const evs: SpanEvent[] = exp.events;
+  check(evs.map((e) => e.eventType).join(",") === [EventType.SpanStart, EventType.Log, EventType.SpanEnd].join(","), "三类事件");
+  check(evs.map((e) => e.seq).join(",") === "1,2,3", "seq 单调递增");
+  check(evs.every((e) => e.extSpanId === evs[0].extSpanId), "同一 span 身份");
+  check(evs[0].spanName === "调用LLM研判" && evs[0].logs.length === 0, "start 用独立字段带名");
+  check(evs.slice(1).every((e) => e.spanName === null), "名字只在 start 上报");
+  check(evs[2].status === 0 && evs[2].durationNs !== null && evs[2].durationNs >= 0n, "end 带状态+耗时");
+  check(new Set(evs.map((e) => eventId(e.extSpanId, e.seq, e.eventType))).size === 3, "event_id 互不相同");
+});
+
+test("嵌套 span 自动建父子", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1);
+  tr.trace("反洗钱筛查", (t) => {
+    t.span("root", (root) => {
+      root.span("child", () => {});
+    });
+  });
+  const starts = exp.events.filter((e) => e.eventType === EventType.SpanStart);
+  const rootStart = starts.find((e) => e.spanName === "root")!;
+  const childStart = starts.find((e) => e.spanName === "child")!;
+  check(rootStart.parentSpanId === null, "根 span 无父");
+  check(childStart.parentSpanId === rootStart.spanId, "子 span 的父是 root");
+});
+
+test("displayName 可选，agent 上下文自动继承", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1, "planner_agent");
+  tr.trace("x", (t) => {
+    t.span("planner.route", { displayName: "  规划下一步  " }, () => {});
+    t.span("普通名字", () => {});
+  });
+  const starts = exp.events.filter((e) => e.eventType === EventType.SpanStart);
+  const advanced = starts.find((e) => e.spanName === "planner.route")!;
+  const simple = starts.find((e) => e.spanName === "普通名字")!;
+  check(advanced.displayName === "规划下一步", "展示名 trim 后上报");
+  check(simple.displayName === null, "简单用法无需 displayName");
+  check(exp.events.every((e) => e.agentName === "planner_agent"), "agent 上下文继承");
+  check(toWire(advanced).display_name === "规划下一步", "展示名进入 wire");
+});
+
+test("setTokens 上报并进线格式", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1);
+  tr.trace("x", (t) => {
+    t.span("llm", (s) => {
+      s.setTokens(1200, 340);
+    });
+  });
+  const end = exp.events.find((e) => e.eventType === EventType.SpanEnd)!;
+  check(end.inputTokens === 1200n && end.outputTokens === 340n, "token 记上");
+  check(toWire(end).input_tokens === "1200", "token 进线格式(字符串避免精度丢失)");
+});
+
+test("结构化 usage 和 attrs 只在 SpanEnd 上报", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1);
+  tr.trace("x", (t) => {
+    t.span("llm", (s) => {
+      s.setModel("qwen3.6-plus");
+      s.setTokens({ inputTokens: 12400, outputTokens: 240, cacheReadTokens: 0, cacheWriteTokens: 300 });
+      s.setAttribute("llm.call_site", "superagent.reasoning");
+      s.setAttributes({ "llm.model_category": "chat", retry: 1, stream: true, skip: null });
+    });
+  });
+  check(exp.events.map((e) => e.eventType).join(",") === `${EventType.SpanStart},${EventType.SpanEnd}`, "只有 start/end");
+  const [start, end] = exp.events;
+  check(start.cacheReadTokens === null && Object.keys(start.attrs ?? {}).length === 0, "start 不重复 usage/attrs");
+  check(end.cacheReadTokens === 0n && end.cacheWriteTokens === 300n, "缓存 token 保留 0");
+  const wire = toWire(end);
+  check(wire.cache_read_tokens === "0" && wire.cache_write_tokens === "300", "缓存 token 进 wire");
+  check(wire.attrs?.["llm.call_site"] === "superagent.reasoning" && wire.attrs?.stream === true, "标量 attrs 进 wire");
+  check(!("skip" in (wire.attrs ?? {})), "null 属性不写入");
+});
+
+test("缓存 token 缺失和 0 可区分", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1);
+  tr.trace("x", (t) => {
+    t.span("missing", (s) => s.setTokens({ inputTokens: 1, outputTokens: 2 }));
+    t.span("zero", (s) => s.setTokens({ inputTokens: 1, outputTokens: 2, cacheReadTokens: 0 }));
+  });
+  const ends = exp.events.filter((e) => e.eventType === EventType.SpanEnd).map(toWire);
+  check(ends[0].cache_read_tokens === null && ends[1].cache_read_tokens === "0", "missing 与 0 不同");
+});
+
+test("会话/agent/eval 文本字段透传并进线格式", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1);
+  tr.trace(
+    "多轮对话",
+    (t) => {
+      t.span("规划", (s) => {
+        s.setAgent("规划");
+        s.setModel("qwen3");
+        s.setIo("请研判这笔交易", "判定为疑似盗刷");
+        s.span("查工具", (tool) => {
+          tool.setTool("kb_lookup");
+        });
+      });
+    },
+    9000,
+  );
+  // 会话 id 透传到本 trace 全部事件（含嵌套子 span）
+  check(exp.events.every((e) => e.sessionId === 9000n), "会话 id 透传到全部事件");
+  const end = exp.events.find((e) => e.eventType === EventType.SpanEnd && e.model === "qwen3")!;
+  check(end.model === "qwen3", "model 记上");
+  check(end.inputText === "请研判这笔交易" && end.outputText === "判定为疑似盗刷", "eval 输入输出文本记上");
+  const w = toWire(end);
+  check(w.session_id === "9000" && w.agent_name === "规划" && w.output_text === "判定为疑似盗刷", "进线格式");
+  const toolEnd = exp.events.find((e) => e.eventType === EventType.SpanEnd && e.toolName === "kb_lookup")!;
+  check(toolEnd.sessionId === 9000n, "子 span 也继承会话 id");
+});
+
+test("异常退出 → 状态非0", () => {
+  const exp = new CollectingExporter();
+  const tr = new Tracer(exp, 1);
+  try {
+    tr.trace("x", (t) => {
+      t.span("y", () => {
+        throw new Error("boom");
+      });
+    });
+  } catch {
+    // 预期
+  }
+  const end = exp.events.find((e) => e.eventType === EventType.SpanEnd)!;
+  check(end.status === 1, "异常 → 状态1");
+});
+
+// 异步测试：HttpExporter 上报失败时退回缓冲 + 回调 onError，不静默吞掉。
+async function asyncTests(): Promise<void> {
+  const ev: SpanEvent = {
+    traceId: 1n, spanId: 1n, ts: 1n, seq: 1n, eventType: EventType.SpanEnd, extSpanId: "s1",
+    parentSpanId: null, status: 0, durationNs: null, inputTokens: null, outputTokens: null,
+    cacheReadTokens: null, cacheWriteTokens: null, attrs: {},
+    sessionId: null, tenantId: null, spanName: null, displayName: null,
+    agentName: null, toolName: null, model: null, inputText: null, outputText: null, logs: [],
+  };
+  const origFetch = globalThis.fetch;
+  try {
+    let errs = 0;
+    globalThis.fetch = (() => Promise.reject(new Error("network down"))) as typeof fetch;
+    const exp = new HttpExporter({ url: "http://x", max: 1, onError: () => { errs++; } });
+    exp.export(ev); // max=1 → 触发 flush → 失败
+    await new Promise((r) => setTimeout(r, 0));
+    check(errs === 1, "失败回调 onError 一次");
+    // 失败的批退回缓冲：恢复 fetch 后 flush 应把它发出去（成功 → 缓冲清空）。
+    let postedHeaders: HeadersInit | undefined;
+    globalThis.fetch = ((_url, init) => {
+      postedHeaders = init?.headers;
+      return Promise.resolve(new Response("", { status: 200 }));
+    }) as typeof fetch;
+    await exp.flush();
+    check(postedHeaders !== undefined && errs === 1 && exp.bufferedCount() === 0 && exp.sentCount() === 1, "恢复后重试成功,不再报错（trace 没被静默丢）");
+
+    const authed = new HttpExporter({ url: "http://x", token: "secret", tenantId: 7n });
+    await authed.exportBatch([ev]);
+    const headers = postedHeaders as Record<string, string>;
+    check(headers.Authorization === "Bearer secret" && headers["X-Tenant-Id"] === "7", "HttpExporter 透传 auth/tenant header");
+
+    let sent = 0;
+    let closeSawSent = false;
+    const asyncSink: Exporter = {
+      export: () => {},
+      exportBatch: async (events) => {
+        await new Promise((r) => setTimeout(r, 0));
+        sent += events.length;
+      },
+      close: async () => {
+        closeSawSent = sent === 1;
+      },
+    };
+    const batch = new BatchExporter(asyncSink, 1);
+    batch.export(ev);
+    await batch.close();
+    check(sent === 1 && closeSawSent, "BatchExporter.close 等待在途异步 exportBatch 完成");
+
+    let tracerClosed = false;
+    const tracer = new Tracer({
+      export: () => {},
+      close: async () => {
+        await new Promise((r) => setTimeout(r, 0));
+        tracerClosed = true;
+      },
+    }, 1);
+    await tracer.close();
+    check(tracerClosed, "Tracer.close 等待底层 exporter.close");
+
+    passed++;
+    console.log("OK  HttpExporter 失败退回缓冲 + headers; BatchExporter async close");
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+}
+
+await asyncTests();
+console.log("\n" + passed + " passed");

@@ -1,0 +1,199 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const npmCache = join(tmpdir(), "fuju-trace-npm-cache");
+const platformPackage =
+  {
+    "darwin:arm64": "darwin-arm64",
+    "darwin:x64": "darwin-x64",
+    "linux:arm64": "linux-arm64-gnu",
+    "linux:x64": "linux-x64-gnu",
+    "win32:x64": "win32-x64-msvc",
+  }[`${process.platform}:${process.arch}`] ?? null;
+
+if (!platformPackage) {
+  throw new Error(`Unsupported verify platform: ${process.platform}/${process.arch}`);
+}
+
+const manifestPath = join(root, "dist", "pack-manifest.json");
+if (!existsSync(manifestPath)) {
+  throw new Error(`Missing local package manifest: ${manifestPath}. Run npm run pack:local first.`);
+}
+
+const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+const rootArtifact = manifest.artifacts.find((artifact) => artifact.kind === "root");
+const platformArtifact = manifest.artifacts.find(
+  (artifact) => artifact.kind === "platform" && artifact.platform === platformPackage,
+);
+
+if (!rootArtifact) {
+  throw new Error(`Missing root package artifact in ${manifestPath}`);
+}
+if (!platformArtifact) {
+  throw new Error(`Missing platform package artifact for ${platformPackage} in ${manifestPath}`);
+}
+if (rootArtifact.version !== manifest.packageVersion || platformArtifact.version !== manifest.packageVersion) {
+  throw new Error(
+    `Package version mismatch: root=${rootArtifact.version}, platform=${platformArtifact.version}, expected=${manifest.packageVersion}`,
+  );
+}
+
+const rootTarball = join(root, "dist", rootArtifact.file);
+const platformTarball = join(root, "dist", platformArtifact.file);
+
+for (const file of [rootTarball, platformTarball]) {
+  if (!existsSync(file)) {
+    throw new Error(`Missing local package artifact: ${file}`);
+  }
+}
+
+const consumer = mkdtempSync(join(tmpdir(), "fuju-trace-pack-consumer-"));
+
+function npm(args, options) {
+  if (process.env.npm_execpath) {
+    return execFileSync(process.execPath, [process.env.npm_execpath, ...args], options);
+  }
+  return execFileSync("npm", args, {
+    ...options,
+    shell: process.platform === "win32",
+  });
+}
+
+try {
+  writeFileSync(join(consumer, "package.json"), JSON.stringify({ type: "module", private: true }, null, 2));
+  npm(["install", "--cache", npmCache, rootTarball, platformTarball], {
+    cwd: consumer,
+    stdio: "inherit",
+  });
+
+  writeFileSync(
+    join(consumer, "verify-esm.mjs"),
+    `
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import { join, dirname } from "node:path";
+import { FujuTraceDB, createSpanEventBuilder } from "@fuju/trace-db";
+
+const require = createRequire(import.meta.url);
+const platformPkgJson = require.resolve("@fuju/trace-db-${platformPackage}/package.json");
+const platformDir = dirname(platformPkgJson);
+assert.ok(existsSync(join(platformDir, "fuju-trace-db.${platformPackage}.node")));
+assert.equal(typeof FujuTraceDB.open, "function");
+
+const dir = await mkdtemp(join(tmpdir(), "fuju-trace-pack-esm-"));
+const db = await FujuTraceDB.open({ dataDir: dir, tenantId: 1 });
+try {
+  const builder = createSpanEventBuilder({
+    traceId: "esm-run",
+    sessionId: "esm-session",
+    attrs: { project_id: "agentic-data", skill: "pack", mode: "esm", call_site: "verify-esm.mjs" },
+  });
+  builder.startSpan({ spanId: "esm-span", agentName: "consumer", inputText: "esm 盗刷验证" });
+  builder.endSpan({ spanId: "esm-span", status: 0, durationNs: 5, outputText: "ok" });
+  await builder.ingest(db);
+
+  const hits = await db.search({ text: "盗刷", filter: { attrs: { project_id: "agentic-data", skill: "pack" } } });
+  assert.equal(hits.length, 1);
+
+  const sessions = await db.sessions({ attrs: { project_id: "agentic-data", skill: "pack", mode: "esm" } });
+  assert.equal(sessions.items.length, 1);
+  assert.equal(sessions.items[0].externalSessionId, "esm-session");
+} finally {
+  await db.close();
+  await rm(dir, { recursive: true, force: true });
+}
+`,
+  );
+
+  writeFileSync(
+    join(consumer, "verify-cjs.cjs"),
+    `
+const assert = require("node:assert/strict");
+const { mkdtemp, rm } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+const { join } = require("node:path");
+const { FujuTraceDB, createSpanEventBuilder } = require("@fuju/trace-db");
+
+(async () => {
+  assert.equal(typeof FujuTraceDB.open, "function");
+  const dir = await mkdtemp(join(tmpdir(), "fuju-trace-pack-cjs-"));
+  const db = await FujuTraceDB.open({ dataDir: dir, tenantId: 1 });
+  try {
+    const builder = createSpanEventBuilder({
+      traceId: "cjs-run",
+      sessionId: "cjs-session",
+      attrs: { project_id: "agentic-data", skill: "pack-cjs", mode: "cjs" },
+    });
+    builder.startSpan({ spanId: "cjs-span", inputText: "cjs 盗刷验证" });
+    builder.endSpan({ spanId: "cjs-span", status: 0, durationNs: 7, outputText: "ok" });
+    await builder.ingest(db);
+    const hits = await db.search({ text: "盗刷", filter: { attrs: { project_id: "agentic-data", skill: "pack-cjs" } } });
+    assert.equal(hits.length, 1);
+  } finally {
+    await db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+`,
+  );
+
+  writeFileSync(
+    join(consumer, "verify-native-path.cjs"),
+    `
+const assert = require("node:assert/strict");
+const { existsSync } = require("node:fs");
+const { mkdtemp, rm } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+const { dirname, join } = require("node:path");
+
+const platformPkgJson = require.resolve("@fuju/trace-db-${platformPackage}/package.json");
+const nativePath = join(dirname(platformPkgJson), "fuju-trace-db.${platformPackage}.node");
+assert.ok(existsSync(nativePath), nativePath);
+process.env.NAPI_RS_NATIVE_LIBRARY_PATH = nativePath;
+
+const { FujuTraceDB, createSpanEventBuilder } = require("@fuju/trace-db");
+
+(async () => {
+  assert.equal(typeof FujuTraceDB.open, "function");
+  const dir = await mkdtemp(join(tmpdir(), "fuju-trace-pack-native-path-"));
+  const db = await FujuTraceDB.open({ dataDir: dir, tenantId: 1 });
+  try {
+    const builder = createSpanEventBuilder({
+      traceId: "native-path-run",
+      sessionId: "native-path-session",
+      attrs: { project_id: "agentic-data", skill: "pack-native-path", mode: "native-path" },
+    });
+    builder.startSpan({ spanId: "native-path-span", inputText: "native path 盗刷验证" });
+    builder.endSpan({ spanId: "native-path-span", status: 0, durationNs: 9, outputText: "ok" });
+    await builder.ingest(db);
+    const hits = await db.search({ text: "盗刷", filter: { attrs: { project_id: "agentic-data", skill: "pack-native-path" } } });
+    assert.equal(hits.length, 1);
+  } finally {
+    await db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+`,
+  );
+
+  const verifyEnv = { ...process.env, NAPI_RS_ENFORCE_VERSION_CHECK: "1" };
+  execFileSync("node", ["verify-esm.mjs"], { cwd: consumer, stdio: "inherit", env: verifyEnv });
+  execFileSync("node", ["verify-cjs.cjs"], { cwd: consumer, stdio: "inherit", env: verifyEnv });
+  execFileSync("node", ["verify-native-path.cjs"], { cwd: consumer, stdio: "inherit", env: verifyEnv });
+  console.log(`Verified @fuju/trace-db local tarballs in clean consumer: ${consumer}`);
+} finally {
+  rmSync(consumer, { recursive: true, force: true });
+}

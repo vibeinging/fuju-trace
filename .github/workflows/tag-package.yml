@@ -1,0 +1,226 @@
+name: Tag Package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test before packaging
+    uses: ./.github/workflows/test.yml
+
+  plan:
+    name: Plan package jobs
+    runs-on: ubuntu-latest
+    outputs:
+      run_sdk: ${{ steps.plan.outputs.run_sdk }}
+      run_native: ${{ steps.plan.outputs.run_native }}
+      sdk_matrix: ${{ steps.plan.outputs.sdk_matrix }}
+      native_matrix: ${{ steps.plan.outputs.native_matrix }}
+
+    steps:
+      - name: Build package matrix
+        id: plan
+        shell: python
+        run: |
+          import json
+          import os
+
+          ref_name = os.environ["GITHUB_REF_NAME"]
+          sdk_targets = ["python-sdk", "typescript-sdk", "rust-sdk", "rust-db-source"]
+          native_platforms = [
+              ("darwin-arm64", "macos-14", ""),
+              ("darwin-x64", "macos-15-intel", ""),
+              ("linux-x64-gnu", "ubuntu-latest", "--compatibility manylinux2014"),
+              ("linux-arm64-gnu", "ubuntu-24.04-arm", "--compatibility manylinux2014"),
+              ("win32-x64-msvc", "windows-latest", ""),
+          ]
+          native_targets = ["python-db", "node-db"]
+
+          selected = None
+          marker = "-only-"
+          if marker in ref_name:
+              selected = ref_name.split(marker, 1)[1]
+
+          if selected:
+              sdk_include = [{"target": target} for target in sdk_targets if target in selected]
+          else:
+              sdk_include = [{"target": target} for target in sdk_targets]
+
+          native_include = []
+          for target in native_targets:
+              if selected and target not in selected:
+                  continue
+              for platform, runner, maturin_args in native_platforms:
+                  if selected and any(item in selected for item in [*sdk_targets, *native_targets]) and target in selected:
+                      if any(p in selected for p, _, _ in native_platforms) and platform not in selected:
+                          continue
+                  native_include.append(
+                      {
+                          "target": target,
+                          "platform": platform,
+                          "runner": runner,
+                          "maturin_args": maturin_args,
+                      }
+                  )
+
+          output_path = os.environ["GITHUB_OUTPUT"]
+          with open(output_path, "a", encoding="utf-8") as out:
+              out.write(f"run_sdk={'true' if sdk_include else 'false'}\n")
+              out.write(f"run_native={'true' if native_include else 'false'}\n")
+              out.write(f"sdk_matrix={json.dumps({'include': sdk_include}, separators=(',', ':'))}\n")
+              out.write(f"native_matrix={json.dumps({'include': native_include}, separators=(',', ':'))}\n")
+
+  sdk:
+    name: Package ${{ matrix.target }}
+    needs: [plan, test]
+    if: ${{ needs.plan.outputs.run_sdk == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.sdk_matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check release versions
+        run: python scripts/check_release_versions.py --tag "${{ github.ref_name }}"
+
+      - name: Setup Node
+        if: ${{ matrix.target == 'typescript-sdk' || matrix.target == 'rust-db-source' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            fuju-trace-sdk/typescript/package-lock.json
+            fuju-trace-console/package-lock.json
+
+      - name: Setup Rust
+        if: ${{ matrix.target == 'rust-sdk' || matrix.target == 'rust-db-source' }}
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install Python SDK packaging tools
+        if: ${{ matrix.target == 'python-sdk' }}
+        run: python -m pip install --upgrade pip build
+
+      - name: Install TypeScript SDK dependencies
+        if: ${{ matrix.target == 'typescript-sdk' }}
+        run: npm ci --prefix fuju-trace-sdk/typescript
+
+      - name: Build package
+        run: ./scripts/package_release_artifacts.sh --target "${{ matrix.target }}"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuju-trace-${{ github.ref_name }}-${{ matrix.target }}
+          path: dist/tag-package
+          if-no-files-found: error
+
+  native:
+    name: Package ${{ matrix.target }} (${{ matrix.platform }})
+    needs: [plan, test]
+    if: ${{ needs.plan.outputs.run_native == 'true' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.native_matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check release versions
+        run: python scripts/check_release_versions.py --tag "${{ github.ref_name }}"
+
+      - name: Setup Node
+        if: ${{ matrix.target == 'node-db' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: fuju-trace-node/package-lock.json
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install Python DB packaging tools
+        if: ${{ matrix.target == 'python-db' && !startsWith(matrix.platform, 'linux-') }}
+        run: python -m pip install --upgrade pip "maturin>=1.8,<2.0"
+
+      - name: Install Node DB dependencies
+        if: ${{ matrix.target == 'node-db' }}
+        run: npm ci --prefix fuju-trace-node
+
+      - name: Build Python DB manylinux wheel
+        if: ${{ matrix.target == 'python-db' && startsWith(matrix.platform, 'linux-') }}
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          working-directory: fuju-trace-db-python
+          manylinux: "2014"
+          args: --release --out ../dist/tag-package/python-db
+
+      - name: Fix Python DB manylinux artifact ownership
+        if: ${{ matrix.target == 'python-db' && startsWith(matrix.platform, 'linux-') }}
+        run: sudo chown -R "$USER":"$USER" dist/tag-package
+
+      - name: Write Python DB manylinux checksums
+        if: ${{ matrix.target == 'python-db' && startsWith(matrix.platform, 'linux-') }}
+        shell: python
+        run: |
+          import hashlib
+          from pathlib import Path
+
+          root = Path("dist/tag-package")
+          rows = []
+          for path in sorted(root.rglob("*")):
+              if not path.is_file() or path.name == "SHA256SUMS.txt":
+                  continue
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              rows.append(f"{digest}  {path.relative_to(root).as_posix()}")
+          (root / "SHA256SUMS.txt").write_text("\n".join(rows) + ("\n" if rows else ""), encoding="utf-8")
+
+      - name: Build package
+        if: ${{ matrix.target != 'python-db' || !startsWith(matrix.platform, 'linux-') }}
+        shell: bash
+        env:
+          MATURIN_BUILD_ARGS: ${{ matrix.maturin_args }}
+        run: ./scripts/package_release_artifacts.sh --target "${{ matrix.target }}"
+
+      - name: Verify Python DB wheel in a clean consumer
+        if: ${{ matrix.target == 'python-db' && startsWith(matrix.platform, 'linux-') }}
+        run: python scripts/verify_python_db_wheel.py --wheel-dir dist/tag-package/python-db
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuju-trace-${{ github.ref_name }}-${{ matrix.target }}-${{ matrix.platform }}
+          path: dist/tag-package
+          if-no-files-found: error

@@ -1,0 +1,15 @@
+[package]
+name = "fuju-trace-db"
+version = "0.1.9"
+edition = "2021"
+license = "MIT"
+rust-version = "1.80"
+description = "Embedded Fuju Trace TraceDB for Rust agents"
+readme = "README.md"
+repository = "https://github.com/vibeinging/fuju-trace"
+keywords = ["tracedb", "ai-agents", "observability", "agent-memory"]
+categories = ["database", "development-tools::debugging"]
+publish = false
+
+[dependencies]
+fuju-trace-engine = { path = "../fuju-trace-engine/crates/fuju-trace-engine" }
