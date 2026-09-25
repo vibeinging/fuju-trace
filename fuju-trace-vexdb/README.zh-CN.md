@@ -10,7 +10,7 @@
 python -m pip install 'fuju-trace[vexdb]==0.1.9'
 ```
 
-这条命令会安装 `fuju-trace` SDK、`fuju-trace-vexdb` 适配器和通用 `psycopg2-binary` 驱动。当前 VexDB 联调使用过普通 `psycopg2`；不需要专用的 `vexdb-psycopg2`。如果你的环境已经提供兼容驱动，可只安装 `fuju-trace-vexdb==0.1.9`，由它自动安装 SDK。
+这条命令会安装 `fuju-trace` SDK、`fuju-trace-vexdb` 适配器和通用 `psycopg2-binary` 驱动。当前 VexDB 联调使用过普通 `psycopg2`；不需要专用的 `vexdb-psycopg2`。如果环境已有符合 `>=2.9.5,<3` 的 `psycopg2-binary`，pip 会复用已有版本；例如 AgenticData 固定的 `2.9.5` 无须升级。如果你的环境已经提供其他兼容的 `psycopg2` 驱动，可只安装 `fuju-trace-vexdb==0.1.9`，由它自动安装 SDK。
 
 拿到原来的 `dist/local-vexdb-0.1.9/` 联调包时，也可离线安装两个 wheel：
 
