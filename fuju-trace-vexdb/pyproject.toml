@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fuju-trace-vexdb"
+version = "0.1.9"
+description = "VexDB storage and native BM25/vector search adapter for Fuju Trace"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Fuju Trace" }]
+dependencies = ["fuju-trace==0.1.9"]
+
+[project.optional-dependencies]
+driver = ["psycopg2-binary>=2.9.12,<3"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["fuju_trace_vexdb"]

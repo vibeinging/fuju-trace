@@ -1,9 +1,11 @@
 """SDK 测试。可直接 `python3 tests/test_sdk.py` 跑，也兼容 pytest。"""
 import builtins
+from concurrent.futures import ThreadPoolExecutor
 import os
 import sys
 import tempfile
 import types
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -24,6 +26,7 @@ from fuju_trace import (  # noqa: E402
     init_fuju_trace,
     shutdown_fuju_trace,
 )
+from fuju_trace._snowflake import Snowflake
 
 # 引擎基准值：cargo run -p fuju-trace-core --example print_event_id
 ENGINE_BASELINE = {
@@ -44,6 +47,22 @@ def test_event_id_is_deterministic_and_sensitive():
     assert event_id("s", 7, EventType.SPAN_END) != event_id("s", 8, EventType.SPAN_END)  # seq
     assert event_id("s", 7, EventType.SPAN_END) != event_id("s", 7, EventType.SPAN_START)  # 类型
     assert event_id("s", 7, EventType.SPAN_END) != event_id("t", 7, EventType.SPAN_END)  # 身份
+
+
+def test_multiple_tracers_with_one_node_do_not_reuse_ids():
+    # 同一个服务进程可能为多个 session 分别建 Tracer。
+    with patch("fuju_trace._snowflake.time.time", return_value=1_700_000_000.123):
+        generators = [Snowflake(37) for _ in range(8)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            ids = list(pool.map(lambda i: generators[i % 8].next(), range(128)))
+    assert len(ids) == len(set(ids))
+    for invalid in (-1, 1024, True):
+        try:
+            Snowflake(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid node_id accepted: {invalid}")
 
 
 def test_span_produces_start_log_end():

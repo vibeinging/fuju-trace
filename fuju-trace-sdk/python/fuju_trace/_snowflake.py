@@ -10,6 +10,24 @@ import threading
 import time
 
 _EPOCH_MS = 1_577_836_800_000  # 2020-01-01Z,缩短数值
+_nodes_lock = threading.Lock()
+_nodes: dict[int, _NodeState] = {}
+
+
+class _NodeState:
+    """同一进程中，同一个 node_id 的所有 Tracer 共用计数器。"""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.last_ms = -1
+        self.seq = 0
+
+
+def _state_for(node: int) -> _NodeState:
+    with _nodes_lock:
+        if node not in _nodes:
+            _nodes[node] = _NodeState()
+        return _nodes[node]
 
 
 class Snowflake:
@@ -17,20 +35,21 @@ class Snowflake:
         if node_id is None:
             # 默认用 PID 低 10 位;多机部署应显式配不同 node_id
             node_id = os.getpid() & 0x3FF
-        self.node = node_id & 0x3FF
-        self._lock = threading.Lock()
-        self._last_ms = -1
-        self._seq = 0
+        if isinstance(node_id, bool) or not isinstance(node_id, int) or not 0 <= node_id <= 0x3FF:
+            raise ValueError("node_id must be an integer from 0 to 1023")
+        self.node = node_id
+        self._state = _state_for(node_id)
 
     def next(self) -> int:
-        with self._lock:
-            ms = int(time.time() * 1000)
-            if ms == self._last_ms:
-                self._seq = (self._seq + 1) & 0xFFF
-                if self._seq == 0:  # 同毫秒序列耗尽,自旋到下一毫秒
-                    while ms <= self._last_ms:
+        state = self._state
+        with state.lock:
+            ms = max(int(time.time() * 1000), state.last_ms)
+            if ms == state.last_ms:
+                state.seq = (state.seq + 1) & 0xFFF
+                if state.seq == 0:  # 同毫秒序列耗尽,自旋到下一毫秒
+                    while ms <= state.last_ms:
                         ms = int(time.time() * 1000)
             else:
-                self._seq = 0
-            self._last_ms = ms
-            return ((ms - _EPOCH_MS) << 22) | (self.node << 12) | self._seq
+                state.seq = 0
+            state.last_ms = ms
+            return ((ms - _EPOCH_MS) << 22) | (self.node << 12) | state.seq

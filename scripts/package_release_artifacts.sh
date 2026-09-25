@@ -50,7 +50,7 @@ want() {
       return 0
       ;;
     sdk)
-      [[ "$target" == "python-sdk" || "$target" == "typescript-sdk" || "$target" == "rust-sdk" || "$target" == "rust-db-source" ]]
+      [[ "$target" == "python-sdk" || "$target" == "python-vexdb" || "$target" == "typescript-sdk" || "$target" == "rust-sdk" || "$target" == "rust-db-source" ]]
       ;;
     native)
       [[ "$target" == "python-db" || "$target" == "node-db" ]]
@@ -96,6 +96,18 @@ if want python-sdk; then
   # 直接写入本次产物目录，保留开发者已有的源码目录 dist/。
   run python -m build "$ROOT_DIR/fuju-trace-sdk/python" --outdir "$OUT_DIR/python-sdk"
   run python "$ROOT_DIR/scripts/verify_python_sdk_consumer.py" --wheel-dir "$OUT_DIR/python-sdk"
+fi
+
+if want python-vexdb; then
+  echo
+  echo "==> VexDB adapter wheel/sdist"
+  run python -m unittest discover -s "$ROOT_DIR/fuju-trace-vexdb/tests" -p 'test_*.py'
+  if [[ ! -d "$OUT_DIR/python-sdk" ]]; then
+    run python -m build "$ROOT_DIR/fuju-trace-sdk/python" --outdir "$OUT_DIR/python-sdk"
+  fi
+  run python -m build "$ROOT_DIR/fuju-trace-vexdb" --outdir "$OUT_DIR/python-vexdb"
+  run python "$ROOT_DIR/scripts/verify_python_vexdb_consumer.py" \
+    --sdk-wheel-dir "$OUT_DIR/python-sdk" --vexdb-wheel-dir "$OUT_DIR/python-vexdb"
 fi
 
 if want python-db; then

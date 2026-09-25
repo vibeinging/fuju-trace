@@ -17,7 +17,7 @@ python3 tests/test_sdk.py     # 含与引擎逐字节一致的 event_id、失败
 
 它会覆盖 `connect(url/path)`、`DbExporter`、Python embedded DB、Node/Rust embedded 包和 TypeScript SDK。
 
-## 三种用法
+## 四种用法
 
 ### 1. 只在本地调试
 
@@ -109,6 +109,16 @@ db.close()
 
 `connect(url=...)` 返回 HTTP client；`connect(path=...)` 返回 `fuju-trace-db` 的 embedded DB handle。
 
+### 4. 使用 VexDB 保存和检索 Trace
+
+```bash
+python -m pip install 'fuju-trace[vexdb]==0.1.9'
+```
+
+这条命令安装独立的 `fuju-trace-vexdb` 适配器和已联调的通用 `psycopg2-binary` 驱动。若部署环境需要自己提供兼容的 `psycopg2` 驱动，直接安装 `fuju-trace-vexdb`，不要选 `driver` extra。连接参数和建表步骤见 [VexDB 适配器说明](../../fuju-trace-vexdb/README.zh-CN.md)。`fuju-trace[vexdb]` 需要 Python 3.10 或更新版本；基础 SDK 仍支持 Python 3.8 起。
+
+需要把事件和检索放入 VexDB 时，可额外安装独立的 [`fuju-trace-vexdb`](../../fuju-trace-vexdb/README.md)，然后调用 `connect(vexdb_dsn=..., tenant_id=1, vector_dim=模型维度, initialize=True)`。`DbExporter` 可直接使用这个连接；VexDB 适配器当前只提供摄入、BM25/向量/混合检索和 trace/span 点读，尚未覆盖 embedded DB 的全部 API。
+
 服务端推荐不要让请求线程直接写 DB，而是用后台单写线程：
 
 ```python
@@ -143,7 +153,7 @@ runtime = init_fuju_trace(path="./data/fuju_trace", tenant_id=1)
 tr = runtime.tracer
 ```
 
-同机多进程没有特殊要求时省略 `node_id`。如果显式配置，必须保证并行运行的进程使用不同的值，不能让所有 worker 都写 `node_id=1`。
+同机多进程试用时可以省略 `node_id`，默认取 PID 低 10 位；生产环境应为每个并行 worker 显式分配 0–1023 中不同的值，不能让所有 worker 都写 `node_id=1`。同一进程里的多个 `Tracer` 若使用相同 `node_id`，现在共用一个 ID 计数器，不会因同毫秒创建而撞号。多机器或大量 worker 不能依赖 PID 低 10 位保证全局唯一；在每个 worker 启动后创建 `Tracer`。
 
 查询也复用当前进程已经打开的 `runtime.db`，不要查询一次 open 一次：
 

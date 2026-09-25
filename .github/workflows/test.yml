@@ -40,3 +40,5 @@ jobs:
         run: ./scripts/test_all.sh --crash --crash-rounds 3
       - name: Verify built Python SDK wheel
         run: ./scripts/package_release_artifacts.sh --target python-sdk
+      - name: Verify VexDB adapter and pip extra
+        run: ./scripts/package_release_artifacts.sh --target python-vexdb

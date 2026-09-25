@@ -49,12 +49,14 @@ def main() -> int:
     ts_package = read_json(ROOT / "fuju-trace-sdk/typescript/package.json")
     python_sdk_package = read_toml(ROOT / "fuju-trace-sdk/python/pyproject.toml")["project"]
     python_db_package = read_toml(ROOT / "fuju-trace-db-python/pyproject.toml")["project"]
+    vexdb_package = read_toml(ROOT / "fuju-trace-vexdb/pyproject.toml")["project"]
     rust_sdk_package = read_toml(ROOT / "fuju-trace-sdk/rust/Cargo.toml")["package"]
     rust_db_package = read_toml(ROOT / "fuju-trace-db-rs/Cargo.toml")["package"]
     expect_name(node_package["name"], "@fuju/trace-db", "Node DB package")
     expect_name(ts_package["name"], "@fuju/trace-sdk", "TypeScript SDK package")
     expect_name(python_sdk_package["name"], "fuju-trace", "Python SDK package")
     expect_name(python_db_package["name"], "fuju-trace-db", "Python DB package")
+    expect_name(vexdb_package["name"], "fuju-trace-vexdb", "VexDB adapter package")
     expect_name(rust_sdk_package["name"], "fuju-trace", "Rust SDK crate")
     expect_name(rust_db_package["name"], "fuju-trace-db", "Rust DB crate")
     expect_name(read_toml(ROOT / "fuju-trace-node/Cargo.toml")["package"]["name"], "fuju-trace-db-node", "Node native crate")
@@ -80,6 +82,7 @@ def main() -> int:
         )["packages"][""]["version"],
         "Python fuju-trace": python_sdk_package["version"],
         "Python fuju-trace-db": python_db_package["version"],
+        "Python fuju-trace-vexdb": vexdb_package["version"],
         "Python native crate": read_toml(ROOT / "fuju-trace-db-python/Cargo.toml")["package"]["version"],
         "Python native Cargo.lock": cargo_package_version(
             ROOT / "fuju-trace-db-python/Cargo.lock", "fuju-trace-db-python"
@@ -128,6 +131,15 @@ def main() -> int:
         raise SystemExit(
             f"Python SDK db extra must be [{expected_db_requirement!r}], found {db_extra!r}"
         )
+
+    vexdb_extra = python_sdk_package.get("optional-dependencies", {}).get("vexdb", [])
+    expected_vexdb_requirement = f"fuju-trace-vexdb[driver]=={expected}"
+    if vexdb_extra != [expected_vexdb_requirement]:
+        raise SystemExit(
+            f"Python SDK vexdb extra must be [{expected_vexdb_requirement!r}], found {vexdb_extra!r}"
+        )
+    if vexdb_package.get("dependencies") != [f"fuju-trace=={expected}"]:
+        raise SystemExit("VexDB adapter must depend on the same Python SDK version")
 
     mismatches = [(name, version) for name, version in versions.items() if version != expected]
     if mismatches:

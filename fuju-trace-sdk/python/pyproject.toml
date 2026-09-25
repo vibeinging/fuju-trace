@@ -28,6 +28,7 @@ dependencies = []  # 纯标准库，零运行时依赖
 
 [project.optional-dependencies]
 db = ["fuju-trace-db==0.1.9"]
+vexdb = ["fuju-trace-vexdb[driver]==0.1.9"]
 
 [project.scripts]
 fuju-trace = "fuju_trace.cli:main"
