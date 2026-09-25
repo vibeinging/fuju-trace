@@ -50,7 +50,7 @@ want() {
       return 0
       ;;
     sdk)
-      [[ "$target" == "python-sdk" || "$target" == "python-vexdb" || "$target" == "typescript-sdk" || "$target" == "rust-sdk" || "$target" == "rust-db-source" ]]
+      [[ "$target" == "python-sdk" || "$target" == "python-vexdb" || "$target" == "python-sql" || "$target" == "typescript-sdk" || "$target" == "rust-sdk" || "$target" == "rust-db-source" ]]
       ;;
     native)
       [[ "$target" == "python-db" || "$target" == "node-db" ]]
@@ -108,6 +108,18 @@ if want python-vexdb; then
   run python -m build "$ROOT_DIR/fuju-trace-vexdb" --outdir "$OUT_DIR/python-vexdb"
   run python "$ROOT_DIR/scripts/verify_python_vexdb_consumer.py" \
     --sdk-wheel-dir "$OUT_DIR/python-sdk" --vexdb-wheel-dir "$OUT_DIR/python-vexdb"
+fi
+
+if want python-sql; then
+  echo
+  echo "==> SQL adapter wheel/sdist"
+  run python -m unittest discover -s "$ROOT_DIR/fuju-trace-sql/tests" -p 'test_*.py'
+  if [[ ! -d "$OUT_DIR/python-sdk" ]]; then
+    run python -m build "$ROOT_DIR/fuju-trace-sdk/python" --outdir "$OUT_DIR/python-sdk"
+  fi
+  run python -m build "$ROOT_DIR/fuju-trace-sql" --outdir "$OUT_DIR/python-sql"
+  run python "$ROOT_DIR/scripts/verify_python_sql_consumer.py" \
+    --sdk-wheel-dir "$OUT_DIR/python-sdk" --sql-wheel-dir "$OUT_DIR/python-sql"
 fi
 
 if want python-db; then

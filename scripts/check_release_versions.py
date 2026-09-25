@@ -50,6 +50,7 @@ def main() -> int:
     python_sdk_package = read_toml(ROOT / "fuju-trace-sdk/python/pyproject.toml")["project"]
     python_db_package = read_toml(ROOT / "fuju-trace-db-python/pyproject.toml")["project"]
     vexdb_package = read_toml(ROOT / "fuju-trace-vexdb/pyproject.toml")["project"]
+    sql_package = read_toml(ROOT / "fuju-trace-sql/pyproject.toml")["project"]
     rust_sdk_package = read_toml(ROOT / "fuju-trace-sdk/rust/Cargo.toml")["package"]
     rust_db_package = read_toml(ROOT / "fuju-trace-db-rs/Cargo.toml")["package"]
     expect_name(node_package["name"], "@fuju/trace-db", "Node DB package")
@@ -57,6 +58,7 @@ def main() -> int:
     expect_name(python_sdk_package["name"], "fuju-trace", "Python SDK package")
     expect_name(python_db_package["name"], "fuju-trace-db", "Python DB package")
     expect_name(vexdb_package["name"], "fuju-trace-vexdb", "VexDB adapter package")
+    expect_name(sql_package["name"], "fuju-trace-sql", "SQL adapter package")
     expect_name(rust_sdk_package["name"], "fuju-trace", "Rust SDK crate")
     expect_name(rust_db_package["name"], "fuju-trace-db", "Rust DB crate")
     expect_name(read_toml(ROOT / "fuju-trace-node/Cargo.toml")["package"]["name"], "fuju-trace-db-node", "Node native crate")
@@ -82,6 +84,7 @@ def main() -> int:
         "Python fuju-trace": python_sdk_package["version"],
         "Python fuju-trace-db": python_db_package["version"],
         "Python fuju-trace-vexdb": vexdb_package["version"],
+        "Python fuju-trace-sql": sql_package["version"],
         "Python native crate": read_toml(ROOT / "fuju-trace-db-python/Cargo.toml")["package"]["version"],
         "Python native Cargo.lock": cargo_package_version(
             ROOT / "fuju-trace-db-python/Cargo.lock", "fuju-trace-db-python"
@@ -132,6 +135,17 @@ def main() -> int:
         )
     if vexdb_package.get("dependencies") != [f"fuju-trace=={expected}"]:
         raise SystemExit("VexDB adapter must depend on the same Python SDK version")
+    if sql_package.get("dependencies") != [f"fuju-trace=={expected}"]:
+        raise SystemExit("SQL adapter must depend on the same Python SDK version")
+    sql_extras = {
+        "sqlite": f"fuju-trace-sql=={expected}",
+        "duckdb": f"fuju-trace-sql[duckdb]=={expected}",
+        "postgresql": f"fuju-trace-sql[postgresql]=={expected}",
+    }
+    for extra, requirement in sql_extras.items():
+        found = python_sdk_package.get("optional-dependencies", {}).get(extra, [])
+        if found != [requirement]:
+            raise SystemExit(f"Python SDK {extra} extra must be [{requirement!r}], found {found!r}")
 
     mismatches = [(name, version) for name, version in versions.items() if version != expected]
     if mismatches:

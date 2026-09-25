@@ -7,6 +7,7 @@ Fuju Trace provides tracing SDKs, a VexDB adapter, and an embedded local TraceDB
 - `fuju-trace-engine/`: standard-library-only Rust engine, WAL, folding, text/vector search.
 - `fuju-trace-sdk/python/`, `typescript/`, `rust/`: instrumentation SDKs.
 - `fuju-trace-vexdb/`: optional VexDB adapter, using a compatible `psycopg2` driver.
+- `fuju-trace-sql/`: source-only SQLite, DuckDB, and PostgreSQL adapters; currently substring text search without native vector support.
 - `fuju-trace-db-python/`, `fuju-trace-node/`, `fuju-trace-db-rs/`: embedded bindings.
 - `docs/CURRENT_STATE.md`: current features and limits.
 
@@ -25,11 +26,13 @@ Fuju Trace provides tracing SDKs, a VexDB adapter, and an embedded local TraceDB
 cargo test --offline --manifest-path fuju-trace-engine/Cargo.toml
 python fuju-trace-sdk/python/tests/test_sdk.py
 python -m unittest discover -s fuju-trace-vexdb/tests -p 'test_*.py'
+python -m unittest discover -s fuju-trace-sql/tests -p 'test_*.py'
+./fuju-trace-sql/tests/run_local_postgresql.sh
 ./scripts/package_mode_eval.sh
 ./tests/crash_recovery_kill9.sh 3
 ```
 
-Use release mode for benchmarks. Run Node, Python DB, and Rust DB package tests after touching their bindings. Confirm packaged wheels and tarballs from a clean consumer before release.
+Use release mode for benchmarks. The local PostgreSQL script needs `initdb`, `pg_ctl`, `createdb`, and a Python with `psycopg2`; set `FUJU_SQL_PYTHON` when that is not the default `python3`. Run Node, Python DB, and Rust DB package tests after touching their bindings. Confirm packaged wheels and tarballs from a clean consumer before release.
 
 ## Git and docs
 

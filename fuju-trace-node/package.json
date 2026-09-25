@@ -1,6 +1,6 @@
 {
   "name": "@fuju/trace-db",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Embedded Fuju Trace database for Node.js and Electron",
   "type": "module",
   "license": "MIT",
@@ -72,10 +72,10 @@
     "@napi-rs/cli": "^3.7.2"
   },
   "optionalDependencies": {
-    "@fuju/trace-db-darwin-arm64": "0.1.9",
-    "@fuju/trace-db-darwin-x64": "0.1.9",
-    "@fuju/trace-db-linux-arm64-gnu": "0.1.9",
-    "@fuju/trace-db-linux-x64-gnu": "0.1.9",
-    "@fuju/trace-db-win32-x64-msvc": "0.1.9"
+    "@fuju/trace-db-darwin-arm64": "0.1.10",
+    "@fuju/trace-db-darwin-x64": "0.1.10",
+    "@fuju/trace-db-linux-arm64-gnu": "0.1.10",
+    "@fuju/trace-db-linux-x64-gnu": "0.1.10",
+    "@fuju/trace-db-win32-x64-msvc": "0.1.10"
   }
 }

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "fuju-trace"
-version = "0.1.9"
+version = "0.1.10"
 description = "Fuju Trace instrumentation SDK — emit trace events with deterministic, engine-matching event_id"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -27,7 +27,10 @@ classifiers = [
 dependencies = []  # 纯标准库，零运行时依赖
 
 [project.optional-dependencies]
-vexdb = ["fuju-trace-vexdb[driver]==0.1.9"]
+vexdb = ["fuju-trace-vexdb[driver]==0.1.10"]
+sqlite = ["fuju-trace-sql==0.1.10"]
+duckdb = ["fuju-trace-sql[duckdb]==0.1.10"]
+postgresql = ["fuju-trace-sql[postgresql]==0.1.10"]
 
 [project.scripts]
 fuju-trace = "fuju_trace.cli:main"

@@ -5,7 +5,7 @@ Python 3.8+ SDK for Agent traces. It emits deterministic events and writes them 
 ## VexDB
 
 ```bash
-pip install 'fuju-trace[vexdb]==0.1.9'
+pip install 'fuju-trace[vexdb]==0.1.10'
 ```
 
 ```python
@@ -13,7 +13,7 @@ import os
 from fuju_trace import DbExporter, Tracer, connect
 
 with connect(vexdb_dsn=os.environ["VEXDB_DSN"], tenant_id=1,
-             vector_dim=3, initialize=True) as db:
+             vector_dim=384, initialize=True) as db:
     tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
     with tracer.trace("risk review", tenant_id=1) as trace:
         with trace.span("investigate") as span:
@@ -22,7 +22,19 @@ with connect(vexdb_dsn=os.environ["VEXDB_DSN"], tenant_id=1,
     print(db.search(text="transaction", k=10))
 ```
 
-The VexDB adapter also accepts `vexdb_params={...}`. `vector_dim` must match the embedding model; text search works without supplying vectors. For batching, use `BufferedDbExporter` and call `flush()` when reads need to see all queued writes. See [the adapter guide](../../fuju-trace-vexdb/README.md).
+The VexDB adapter also accepts `vexdb_params={...}`. `384` is an example: `vector_dim` must match the embedding model you may use later. Text search works without supplying vectors, although VexDB still creates a vector column and index. For batching, use `BufferedDbExporter`, call `flush()` before reading, and check `health()` for write errors or drops. See [the adapter guide](../../fuju-trace-vexdb/README.md).
+
+## SQLite, DuckDB, and PostgreSQL
+
+`fuju-trace-sql` provides three direct database adapters for Python 3.10+:
+
+```bash
+python -m pip install 'fuju-trace[sqlite]==0.1.10'
+python -m pip install 'fuju-trace[duckdb]==0.1.10'
+python -m pip install 'fuju-trace[postgresql]==0.1.10'
+```
+
+Use `connect(sqlite_path=...)`, `connect(duckdb_path=...)`, or `connect(postgresql_dsn=...)`. The same `DbExporter` and `Tracer` work with these stores. Their current search is a substring scan, with no BM25 or vector support. See [SQL adapter guide](../../fuju-trace-sql/README.md) for drivers, code, and limits.
 
 ## Local embedded DB
 

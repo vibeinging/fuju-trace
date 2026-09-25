@@ -15,6 +15,20 @@ jobs:
     name: Full test suite
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: fuju_trace_test
+          POSTGRES_USER: fuju_test
+          POSTGRES_PASSWORD: fuju_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fuju_test -d fuju_trace_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,3 +67,11 @@ jobs:
         run: ./scripts/package_release_artifacts.sh --target python-sdk
       - name: Verify VexDB adapter and pip extra
         run: ./scripts/package_release_artifacts.sh --target python-vexdb
+      - name: Test SQL adapters and verify built wheels
+        env:
+          POSTGRESQL_DSN: host=127.0.0.1 port=5432 dbname=fuju_trace_test user=fuju_test password=fuju_test
+        run: |
+          python -m pip install "duckdb>=1.0,<3" "psycopg2-binary>=2.9.5,<3"
+          python -m unittest discover -s fuju-trace-sql/tests -p 'test_*.py'
+          python fuju-trace-sql/tests/live_smoke.py
+          ./scripts/package_release_artifacts.sh --target python-sql

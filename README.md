@@ -1,76 +1,92 @@
 # Fuju Trace
 
-Fuju Trace is an AI Agent tracing SDK with an embeddable Trace data layer. An application creates traces and spans in-process, then writes events directly to VexDB or the local TraceDB. Reads use the same database adapter. No separate Trace service is needed.
+Fuju Trace records AI Agent runs and lets applications query them directly. The SDK represents a run as traces, spans, and events; storage adapters can write to **VexDB**, local TraceDB, SQLite, DuckDB, or PostgreSQL. The current project does not expose a standalone HTTP/OTLP service or web console.
 
-[中文说明](README.zh-CN.md) · [VexDB setup](fuju-trace-vexdb/README.md)
+[中文说明](README.zh-CN.md) · [VexDB connection guide](fuju-trace-vexdb/README.md) · [Current state](docs/CURRENT_STATE.md)
+
+## Why traces
+
+Logs tell you what happened. A trace also shows **which step called which, in what order, how long it took, and what it returned**. Fuju Trace keeps the original start/log/end events and folds them into searchable spans. Use session and trace IDs to follow an execution path, then search text and attributes to find related runs.
+
+Technical properties of this release:
+
+- **Idempotent events:** `event_id` is derived from `ext_span_id`, `seq`, and event type. The Python, TypeScript, and Rust SDKs match the local engine byte-for-byte, so retries and recovery do not count an event twice.
+- **Choice of storage:** The Python SDK writes through an `Exporter`. VexDB uses native BM25 and vector indexes; local TraceDB has its own WAL, Chinese BM25, and vector index. The general SQL adapters start with transactional writes and basic text queries.
+- **Execution context:** Session, trace, and span relationships remain queryable. Tenant, time, agent, status, and attribute filters are available; exact text, vector, and hybrid features depend on the selected adapter.
+- **Optional embeddings:** Text search works without writing vectors. VexDB still requires `vector_dim` at table creation and creates a vector column and index, even for a text-only workload.
 
 ## VexDB quick start
 
+Requires Python 3.10 or later:
+
 ```bash
-pip install 'fuju-trace[vexdb]==0.1.9'
+python -m pip install 'fuju-trace[vexdb]==0.1.10'
 ```
 
 ```python
 import os
 from fuju_trace import DbExporter, Tracer, connect
 
-with connect(vexdb_dsn=os.environ["VEXDB_DSN"], tenant_id=1,
-             vector_dim=3, initialize=True) as db:
+params = {
+    "host": os.environ["DB_HOST"],
+    "port": int(os.environ.get("DB_PORT", "5432")),
+    "dbname": os.environ["DB_NAME"],
+    "user": os.environ["DB_USER"],
+    "password": os.environ["DB_PASSWORD"],
+}
+
+with connect(vexdb_params=params, tenant_id=1, vector_dim=384,
+             initialize=True) as db:
     tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
-    with tracer.trace("risk review", tenant_id=1) as trace:
-        with trace.span("investigate") as span:
-            span.log("suspicious transaction")
+    with tracer.trace("risk review", session_id=1001, tenant_id=1) as trace:
+        with trace.span("investigate transaction") as span:
+            span.log("suspicious transaction; manual review needed")
     tracer.close()
     print(db.search(text="transaction", k=10))
 ```
 
-Set `vector_dim` to your embedding model's dimension. Text search works without embeddings. Supply vectors through `db.set_embedding(...)` if you need vector or hybrid search. `initialize=True` creates the tables and indexes on first use. Pass either `vexdb_dsn` or `vexdb_params`; keep credentials outside the repository. The adapter uses the standard `psycopg2` protocol and can reuse an existing compatible `psycopg2-binary` installation.
+Set `vector_dim` to your embedding model's actual dimension; `384` is a placeholder. `initialize=True` creates tables and indexes on first use and requires DDL permissions. Later opens may omit it. You can also pass a securely managed `vexdb_dsn`. See the [adapter guide](fuju-trace-vexdb/README.md) for connection parameters, session reads, and text-only use.
 
-Use `BufferedDbExporter` for batched writes, with an explicit `flush()` when reads must see the data. Use `DbExporter` when each write must complete synchronously. Sessions in one process may share a VexDB store. Assign distinct `node_id` values across processes or hosts.
+The extra installs `fuju-trace-vexdb` and the generic `psycopg2-binary>=2.9.5,<3` driver. Pip reuses a compatible installed version. If your application supplies a compatible `psycopg2` driver, install `fuju-trace-vexdb==0.1.10` separately.
 
-## Local embedded TraceDB
+## Choose a write and query path
 
-From a source checkout, build the native Python binding:
+| Need | API | Behavior |
+| --- | --- | --- |
+| Confirm each write | `DbExporter(db)` | Synchronous and simple for initial integration. |
+| Write many sessions continuously | `BufferedDbExporter(db, max_batch=128, drop_when_full=False)` | Batches in the background; call `flush()` before reading, then inspect `health()` for write errors and drops. A successful flush means the queue was processed, not that every event reached the database. |
+| Search text only | `db.search(text="transaction", k=10)` | No embedding generation or vector writes needed. |
+| Semantic or hybrid search | `db.set_embedding(...)`, then search with `vector` or both `text` and `vector` | Your application supplies the embeddings. |
+| Store locally in-process | Build `fuju-trace-db` from source | For same-host applications; the native DB wheel is outside this PyPI release. |
+
+Sessions in one process may share a VexDB store; its single database connection serializes use. Open a separate connection per process and assign distinct `node_id` values (0–1023) to writer processes. The VexDB adapter supports ingest, text/vector/hybrid search, trace/span point reads, and session filters. It does not implement every local TraceDB method.
+
+## Local TraceDB
+
+The Rust engine provides WAL recovery, immutable segments, span folding, Chinese BM25, and a vector index. Build the Python binding from a source checkout:
 
 ```bash
 python -m pip install -e ./fuju-trace-sdk/python -e ./fuju-trace-db-python
 ```
 
-```python
-from fuju_trace import DbExporter, Tracer, connect
+Replace the VexDB `connect(...)` call above with `connect(path="./trace-data", tenant_id=1)`; the `Tracer` and `DbExporter` usage stays the same. Processes on one host may share a local data directory. Sharing it across hosts or over a network filesystem is unsupported. The repository also retains Node/Electron and Rust embedded bindings.
 
-with connect(path="./trace-data", tenant_id=1) as db:
-    tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
-    with tracer.trace("request", tenant_id=1) as trace:
-        with trace.span("tool call") as span:
-            span.log("done")
-    tracer.close()
-    print(db.search(text="done", k=10))
-```
+## SQLite, DuckDB, and PostgreSQL adapters
 
-The Rust engine provides WAL recovery, span folding, Chinese BM25, a vector index, and filtered search. Processes on the same host may share a local data directory; sharing it between hosts is unsupported. Node/Electron bindings live in `@fuju/trace-db`, and the Rust binding is `fuju-trace-db`.
+The three SQL adapters install through `fuju-trace[sqlite]`, `fuju-trace[duckdb]`, or `fuju-trace[postgresql]`. They share idempotent events, transactional span folding, tenant isolation, session/trace reads, and exact attribute filters. Text search currently uses a `LIKE` substring scan; there is **no BM25 or vector search**. Measure query time on your data before using it at scale. Choose VexDB when native BM25 and vector search are required.
 
-## Technical properties
+| Database | Connection form | Typical use |
+| --- | --- | --- |
+| SQLite | `connect(sqlite_path="./trace.sqlite", tenant_id=1, initialize=True)` | Single-host file database |
+| DuckDB | `connect(duckdb_path="./trace.duckdb", tenant_id=1, initialize=True)` | Local analytics with one writer process |
+| PostgreSQL | `connect(postgresql_dsn="...", tenant_id=1, initialize=True)` | Services with an existing PostgreSQL instance |
 
-- Deterministic `event_id = hash(ext_span_id, seq, event_type)` matches the Python, TypeScript, and Rust SDKs and the engine byte-for-byte. Repeated events are counted once.
-- Start, log, and end events fold into spans. The local DB recovers from its WAL and immutable segments.
-- Text, vector, and hybrid search support tenant, trace, time, agent, status, and attribute filters. VexDB uses native BM25 and vector indexes; the local engine has its own indexes.
-- Exporter and database adapters keep instrumentation separate from storage. The base Python SDK has no database runtime dependency; install the `db` or `vexdb` extra for the chosen backend.
+See the [SQL adapter guide](fuju-trace-sql/README.md) for source installation and drivers. SQLite and DuckDB have real file database tests. PostgreSQL has been tested with a temporary local PostgreSQL 16 instance; CI is configured to repeat it against a disposable service database. MySQL is outside the current support scope.
 
-## Repository
+## Release and verification
 
-- `fuju-trace-sdk/`: Python, TypeScript, and Rust instrumentation SDKs.
-- `fuju-trace-vexdb/`: VexDB event store, folded span model, and search adapter.
-- `fuju-trace-engine/`: local Rust TraceDB engine.
-- `fuju-trace-db-python/`, `fuju-trace-node/`, `fuju-trace-db-rs/`: in-process database bindings.
-- `docs/CURRENT_STATE.md`: implementation status and limits.
+Version 0.1.10 includes `fuju-trace`, `fuju-trace-vexdb`, and `fuju-trace-sql` on PyPI. Install the needed extra from the base SDK. The [0.1.9 release report](docs/reports/2026-09-25_serverless-python-release.md) and [SQL real database test report](docs/reports/2026-09-25_sql-adapter-real-tests.md) record the verification scope.
 
-## Verify
+[Python SDK](fuju-trace-sdk/python/README.md) · [VexDB adapter](fuju-trace-vexdb/README.md) · [Development notes](AGENTS.md) · [MIT license](LICENSE)
 
-```bash
-cargo test --offline --manifest-path fuju-trace-engine/Cargo.toml
-./scripts/package_mode_eval.sh
-./tests/crash_recovery_kill9.sh 3
-```
-
-MIT licensed. This is an alpha release; validate query plans, recall, and write latency with your own workload before production use.
+`fuju-rsi` is a separate project. The projects are intended to integrate through an optional plugin; Fuju Trace has no runtime dependency on RSI.

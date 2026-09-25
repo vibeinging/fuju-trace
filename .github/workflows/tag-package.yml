@@ -35,7 +35,7 @@ jobs:
           import os
 
           ref_name = os.environ["GITHUB_REF_NAME"]
-          sdk_targets = ["python-sdk", "python-vexdb", "typescript-sdk", "rust-sdk", "rust-db-source"]
+          sdk_targets = ["python-sdk", "python-vexdb", "python-sql", "typescript-sdk", "rust-sdk", "rust-db-source"]
           native_platforms = [
               ("darwin-arm64", "macos-14", ""),
               ("darwin-x64", "macos-15-intel", ""),
@@ -117,7 +117,7 @@ jobs:
           rustup default stable
 
       - name: Install Python SDK packaging tools
-        if: ${{ matrix.target == 'python-sdk' || matrix.target == 'python-vexdb' }}
+        if: ${{ matrix.target == 'python-sdk' || matrix.target == 'python-vexdb' || matrix.target == 'python-sql' }}
         run: python -m pip install --upgrade pip build
 
       - name: Install TypeScript SDK dependencies
