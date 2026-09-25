@@ -16,4 +16,4 @@ Updated 2026-09-25. Fuju Trace is an in-process trace SDK and data adapter proje
 - The source remains alpha. Test on the actual data shape and database version before production use.
 - Core checks: `cargo test --offline --manifest-path fuju-trace-engine/Cargo.toml`, `./scripts/package_mode_eval.sh`, VexDB unit and live smoke tests, and `./tests/crash_recovery_kill9.sh 3`.
 
-The package release is pending verification. No PyPI publication is claimed by this file.
+Python SDK `fuju-trace==0.1.9` and VexDB adapter `fuju-trace-vexdb==0.1.9` are published to PyPI. The native `fuju-trace-db` wheel is built and tested locally but is not part of this PyPI release. See `docs/reports/2026-09-25_serverless-python-release.md`.
