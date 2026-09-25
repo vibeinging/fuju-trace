@@ -360,7 +360,7 @@ impl WriteCoordinator {
     }
 
     /// 按产品维度过滤的**中文检索**：BM25 命中后按 `SearchFilter`（agent/状态/时间/trace）后置过滤。
-    /// "搜『盗刷』里 agent=风控、报错的那些 span" —— HTTP 检索端点用这个。
+    /// "搜『盗刷』里 agent=风控、报错的那些 span" —— 进程内检索入口用这个。
     pub fn search_text_attr(
         &self,
         snap: &Snapshot,
@@ -372,7 +372,7 @@ impl WriteCoordinator {
         self.join_folded(snap, cands)
     }
 
-    /// 与 `search_text_attr` 相同，但同时返回 segment 点查证据，供 HTTP readPlan 和性能回归使用。
+    /// 与 `search_text_attr` 相同，但同时返回 segment 点查证据，供 readPlan 和性能回归使用。
     pub fn search_text_attr_with_read_plan(
         &self,
         snap: &Snapshot,

@@ -112,93 +112,37 @@ request GET /v1/traces >"$WORK_DIR/old-traces.json"
 request POST /v1/search '{"text":"盗刷","k":20}' >"$WORK_DIR/old-search.json"
 stop_server
 
-echo "==> 构建当前引擎"
+echo "==> 构建当前引擎的进程内升级探针"
 cargo build --offline --manifest-path "$ROOT_DIR/fuju-trace-engine/Cargo.toml" \
-  -p fuju-trace-engine --example server_durable --release
+  -p fuju-trace-engine --example upgrade_probe --release
+CURRENT_BIN="$ROOT_DIR/fuju-trace-engine/target/release/examples/upgrade_probe"
+"$CURRENT_BIN" first "$DATA_DIR" >"$WORK_DIR/current-first.log" 2>&1
 
-echo "==> 用当前引擎打开 $BASE_TAG 数据目录"
-CURRENT_BIN="$ROOT_DIR/fuju-trace-engine/target/release/examples/server_durable"
-start_server "$CURRENT_BIN" "$WORK_DIR/current-first.log"
-request GET /v1/traces >"$WORK_DIR/current-traces-before-retry.json"
-request POST /v1/search '{"text":"盗刷","k":20}' >"$WORK_DIR/current-search.json"
-request POST /v1/search '{"text":"盗刷","k":20,"filter":{"attrs":{"project_id":"scale-a"}}}' \
-  >"$WORK_DIR/current-filter-search.json"
-request POST /v1/trace-aggregate '{"filter":{"projectId":"scale-a"},"groupBy":["skill"],"limit":20}' \
-  >"$WORK_DIR/current-rollup.json"
-request GET /v1/traces/900001 >"$WORK_DIR/current-custom-trace-before-retry.json"
-request POST /v1/search '{"text":"升级去重验证","k":10}' >"$WORK_DIR/current-custom-search-before-retry.json"
-request POST /v1/ingest "$CUSTOM_EVENT" >"$WORK_DIR/current-retry-ingest.json"
-request GET /v1/traces/900001 >"$WORK_DIR/current-custom-trace-after-retry.json"
-request POST /v1/search '{"text":"升级去重验证","k":10}' >"$WORK_DIR/current-custom-search-after-retry.json"
-request GET /v1/traces >"$WORK_DIR/current-traces-after-retry.json"
-stop_server
-
-python - "$WORK_DIR" "$DATA_DIR" <<'PY'
+python - "$DATA_DIR" <<'PYVERIFY'
 from pathlib import Path
-import json
 import struct
 import sys
-
-work = Path(sys.argv[1])
-data_dir = Path(sys.argv[2])
-
-def load(name):
-    return json.loads((work / name).read_text(encoding="utf-8"))
-
-old_traces = load("old-traces.json")
-before = load("current-traces-before-retry.json")
-after = load("current-traces-after-retry.json")
-assert len(old_traces) == len(before) == len(after), (
-    len(old_traces), len(before), len(after)
-)
-assert load("old-search.json"), "baseline search is empty"
-assert load("current-search.json"), "current search lost baseline results"
-assert load("current-filter-search.json"), "attrs search lost baseline results"
-assert load("current-rollup.json")["items"], "rollup lost baseline results"
-
-trace = load("current-custom-trace-after-retry.json")
-spans = trace.get("spans", [])
-assert len(spans) == 1, f"duplicate retry produced {len(spans)} spans"
-assert load("current-custom-trace-before-retry.json") == trace
-assert load("current-custom-search-before-retry.json") == load("current-custom-search-after-retry.json")
-
-expected = {
-    "bm25.dat": 4,
-    "filter_attrs.dat": 3,
-    # v3 仍受当前引擎支持；只读升级不应为了格式升级强制重写整份 rollup。
-    "trace_rollup.dat": 3,
-    # v1 没有整文件 CRC；当前引擎首次读取会从真实 segment 重建并升级为 v2。
-    "segment_bloom.dat": 2,
-}
+root = Path(sys.argv[1])
+expected = {"bm25.dat": 4, "filter_attrs.dat": 3, "trace_rollup.dat": 3, "segment_bloom.dat": 2}
 for name, version in expected.items():
-    raw = (data_dir / name).read_bytes()
-    actual = struct.unpack_from("<I", raw, 4)[0]
+    actual = struct.unpack_from("<I", (root / name).read_bytes(), 4)[0]
     assert actual == version, f"{name}: expected v{version}, got v{actual}"
-
-segment_dir = data_dir / "segments"
-segment_files = sorted(segment_dir.glob("seg-*.dat"))
-index_files = sorted(segment_dir.glob("seg-*.idx"))
-assert segment_files, "upgrade fixture has no segments"
-assert len(index_files) == len(segment_files), (len(segment_files), len(index_files))
-print(f"upgrade preserved {len(after)} traces and rebuilt {len(index_files)} segment indexes")
-PY
+segments = list((root / "segments").glob("seg-*.dat"))
+indexes = list((root / "segments").glob("seg-*.idx"))
+assert segments and len(segments) == len(indexes)
+print(f"upgrade preserved {len(segments)} segments and rebuilt indexes")
+PYVERIFY
 
 if ! rg -q 'event="segment_scan_indexes_ready".*cache_loaded=false' "$WORK_DIR/current-first.log"; then
-  echo "第一次打开没有安全重建 v0.1.5 的无 CRC bloom sidecar" >&2
+  echo "第一次打开没有安全重建旧版 bloom sidecar" >&2
   cat "$WORK_DIR/current-first.log" >&2
   exit 1
 fi
 
-echo "==> 再次重启并直接加载当前版本派生索引"
-start_server "$CURRENT_BIN" "$WORK_DIR/current-second.log"
-request POST /v1/search '{"text":"盗刷","k":20}' >/dev/null
-request POST /v1/search '{"text":"盗刷","k":20,"filter":{"attrs":{"project_id":"scale-a"}}}' >/dev/null
-request POST /v1/trace-aggregate '{"filter":{"projectId":"scale-a"},"groupBy":["skill"],"limit":20}' >/dev/null
-stop_server
-
+"$CURRENT_BIN" second "$DATA_DIR" >"$WORK_DIR/current-second.log" 2>&1
 for event in bm25_cache_load segment_bloom_cache_load filter_attrs_cache_load trace_rollup_cache_load; do
   if ! rg -q "event=\"$event\"" "$WORK_DIR/current-second.log"; then
-    echo "第二次重启没有直接加载 $event" >&2
+    echo "第二次打开没有直接加载 $event" >&2
     cat "$WORK_DIR/current-second.log" >&2
     exit 1
   fi

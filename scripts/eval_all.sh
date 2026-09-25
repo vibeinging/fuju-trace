@@ -7,7 +7,7 @@
 #   - Rust 引擎离线测试
 #
 # 可选参数：
-#   --packages       额外跑 package-mode eval 和控制台测试
+#   --packages       额外跑 package-mode eval
 #   --pack           额外跑 @fuju/trace-db 本地打包验证
 #   --crash          额外跑 kill -9 崩溃恢复测试（默认 3 轮，可用 --crash-rounds N）
 #   --sidecar-crash  额外跑派生索引原子替换窗口的 kill -9 测试
@@ -19,7 +19,6 @@
 #   --skip-python-db 在 --packages 下跳过 Python 嵌入式 DB
 #   --skip-rust-db   在 --packages 下跳过 Rust 嵌入式 DB crate
 #   --skip-sdk       在 --packages 下跳过 Python/TypeScript SDK
-#   --skip-ui        在 --packages 下跳过控制台测试和构建
 
 set -euo pipefail
 
@@ -35,7 +34,6 @@ RUN_NODE=1
 RUN_PYTHON_DB=1
 RUN_RUST_DB=1
 RUN_SDK=1
-RUN_UI=1
 CRASH_ROUNDS=3
 
 while [[ $# -gt 0 ]]; do
@@ -97,10 +95,6 @@ while [[ $# -gt 0 ]]; do
       RUN_SDK=0
       shift
       ;;
-    --skip-ui)
-      RUN_UI=0
-      shift
-      ;;
     *)
       echo "未知参数: $1" >&2
       exit 2
@@ -152,18 +146,6 @@ if [[ "$RUN_PACKAGES" -eq 1 ]]; then
     run "$ROOT_DIR/scripts/package_mode_eval.sh" "${PACKAGE_ARGS[@]}"
   fi
 
-  if [[ "$RUN_UI" -eq 1 ]]; then
-    if need_dir "$ROOT_DIR/fuju-trace-console"; then
-      pushd "$ROOT_DIR/fuju-trace-console" >/dev/null
-      if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scripts.test ? 0 : 1)'; then
-        run npm test
-      else
-        echo "跳过控制台测试：package.json 未定义 test 脚本"
-      fi
-      run npm run build
-      popd >/dev/null
-    fi
-  fi
 fi
 
 if [[ "$RUN_PACK" -eq 1 && "$RUN_NODE" -eq 1 ]]; then
@@ -176,7 +158,7 @@ fi
 
 if [[ "$RUN_CRASH" -eq 1 ]]; then
   pushd "$ROOT_DIR/fuju-trace-engine" >/dev/null
-  run cargo build -p fuju-trace-engine --example server_durable --release
+  run cargo build -p fuju-trace-engine --example crash_worker --release
   popd >/dev/null
   pushd "$ROOT_DIR" >/dev/null
   run ./tests/crash_recovery_kill9.sh "$CRASH_ROUNDS"

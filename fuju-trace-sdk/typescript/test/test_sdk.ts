@@ -1,5 +1,5 @@
 // SDK 测试。`node test/test_sdk.ts`（Node 23+ 原生跑 .ts）。
-import { BatchExporter, CollectingExporter, EventType, HttpExporter, Tracer, eventId, toWire, type Exporter, type SpanEvent } from "../src/index.ts";
+import { BatchExporter, CollectingExporter, EventType, Tracer, eventId, toWire, type Exporter, type SpanEvent } from "../src/index.ts";
 
 let passed = 0;
 function check(cond: boolean, msg: string): void {
@@ -164,7 +164,7 @@ test("异常退出 → 状态非0", () => {
   check(end.status === 1, "异常 → 状态1");
 });
 
-// 异步测试：HttpExporter 上报失败时退回缓冲 + 回调 onError，不静默吞掉。
+// 异步测试：批量 sink 关闭时等待在途写入。
 async function asyncTests(): Promise<void> {
   const ev: SpanEvent = {
     traceId: 1n, spanId: 1n, ts: 1n, seq: 1n, eventType: EventType.SpanEnd, extSpanId: "s1",
@@ -173,28 +173,7 @@ async function asyncTests(): Promise<void> {
     sessionId: null, tenantId: null, spanName: null, displayName: null,
     agentName: null, toolName: null, model: null, inputText: null, outputText: null, logs: [],
   };
-  const origFetch = globalThis.fetch;
-  try {
-    let errs = 0;
-    globalThis.fetch = (() => Promise.reject(new Error("network down"))) as typeof fetch;
-    const exp = new HttpExporter({ url: "http://x", max: 1, onError: () => { errs++; } });
-    exp.export(ev); // max=1 → 触发 flush → 失败
-    await new Promise((r) => setTimeout(r, 0));
-    check(errs === 1, "失败回调 onError 一次");
-    // 失败的批退回缓冲：恢复 fetch 后 flush 应把它发出去（成功 → 缓冲清空）。
-    let postedHeaders: HeadersInit | undefined;
-    globalThis.fetch = ((_url, init) => {
-      postedHeaders = init?.headers;
-      return Promise.resolve(new Response("", { status: 200 }));
-    }) as typeof fetch;
-    await exp.flush();
-    check(postedHeaders !== undefined && errs === 1 && exp.bufferedCount() === 0 && exp.sentCount() === 1, "恢复后重试成功,不再报错（trace 没被静默丢）");
-
-    const authed = new HttpExporter({ url: "http://x", token: "secret", tenantId: 7n });
-    await authed.exportBatch([ev]);
-    const headers = postedHeaders as Record<string, string>;
-    check(headers.Authorization === "Bearer secret" && headers["X-Tenant-Id"] === "7", "HttpExporter 透传 auth/tenant header");
-
+  {
     let sent = 0;
     let closeSawSent = false;
     const asyncSink: Exporter = {
@@ -224,9 +203,7 @@ async function asyncTests(): Promise<void> {
     check(tracerClosed, "Tracer.close 等待底层 exporter.close");
 
     passed++;
-    console.log("OK  HttpExporter 失败退回缓冲 + headers; BatchExporter async close");
-  } finally {
-    globalThis.fetch = origFetch;
+    console.log("OK  BatchExporter async close");
   }
 }
 

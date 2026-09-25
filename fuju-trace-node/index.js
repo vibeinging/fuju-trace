@@ -402,15 +402,6 @@ export class FujuTraceDB {
     return result;
   }
 
-  async ingestOtlp(body, options = {}) {
-    this.#ensureOpen();
-    const response = this.#native.ingestOtlpJson(
-      typeof body === "string" ? body : JSON.stringify(body),
-      tenantId(options) ?? this.#tenantId,
-    );
-    return parseJson(response);
-  }
-
   async search(query, options = {}) {
     this.#ensureOpen();
     const response = this.#native.searchJson(JSON.stringify(await this.#prepareSearchQuery(query)), tenantId(options) ?? this.#tenantId);

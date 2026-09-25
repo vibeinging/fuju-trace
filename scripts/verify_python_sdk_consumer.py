@@ -58,10 +58,7 @@ def main() -> int:
         script.write_text(
             textwrap.dedent(
                 """
-                from fuju_trace import CollectingExporter, NoopExporter, Tracer, FujuTraceClient, connect, init_fuju_trace, shutdown_fuju_trace
-
-                client = connect(url="http://127.0.0.1:7878", tenant_id=1)
-                assert isinstance(client, FujuTraceClient)
+                from fuju_trace import CollectingExporter, NoopExporter, Tracer, connect, init_fuju_trace, shutdown_fuju_trace
 
                 exporter = CollectingExporter()
                 tracer = Tracer(exporter=exporter, node_id=1)
@@ -75,7 +72,6 @@ def main() -> int:
                 except RuntimeError as err:
                     message = str(err)
                     assert "pip install fuju-trace-db" in message
-                    assert "pip install 'fuju-trace[db]'" in message
                 else:
                     raise AssertionError("connect(path=...) must explain the missing fuju-trace-db package")
 

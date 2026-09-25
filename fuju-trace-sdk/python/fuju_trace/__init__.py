@@ -4,7 +4,7 @@
 去重、崩溃重放幂等全都对得上。
 """
 from ._snowflake import Snowflake
-from .client import FujuTraceClient, connect
+from .client import connect
 from .event import EventType, SpanEvent, event_id
 from .exporter import (
     BatchExporter,
@@ -13,7 +13,6 @@ from .exporter import (
     ConsoleExporter,
     DbExporter,
     Exporter,
-    HttpExporter,
     NoopExporter,
     SpoolConsumer,
     SpoolDbExporter,
@@ -23,7 +22,6 @@ from .tracer import Span, Trace, Tracer
 
 __all__ = [
     "Snowflake",
-    "FujuTraceClient",
     "connect",
     "EventType",
     "SpanEvent",
@@ -36,7 +34,6 @@ __all__ = [
     "SpoolDbExporter",
     "SpoolConsumer",
     "BatchExporter",
-    "HttpExporter",
     "NoopExporter",
     "FujuTraceRuntime",
     "init_fuju_trace",

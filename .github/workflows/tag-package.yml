@@ -102,14 +102,13 @@ jobs:
         run: python scripts/check_release_versions.py --tag "${{ github.ref_name }}"
 
       - name: Setup Node
-        if: ${{ matrix.target == 'typescript-sdk' || matrix.target == 'rust-db-source' }}
+        if: ${{ matrix.target == 'typescript-sdk' }}
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
             fuju-trace-sdk/typescript/package-lock.json
-            fuju-trace-console/package-lock.json
 
       - name: Setup Rust
         if: ${{ matrix.target == 'rust-sdk' || matrix.target == 'rust-db-source' }}

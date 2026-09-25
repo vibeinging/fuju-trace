@@ -191,7 +191,7 @@ fn load_trace_tree_assembles_parent_child() {
 
 #[test]
 fn parse_wire_batch_then_ingest_reads_back() {
-    // 完整数据路:SDK 线格式 JSON → parse → ingest_wire → 折叠 → 读回（就差 HTTP 那层）。
+    // 完整数据路：SDK 线格式 JSON → parse → ingest_wire → 折叠 → 读回。
     let json = r#"[
       {"trace_id":7,"span_id":1,"ts":100,"seq":1,"event_type":1,"ext_span_id":"7-1","status":0,"input_tokens":900,"logs":["开始"]},
       {"trace_id":7,"span_id":1,"ts":150,"seq":2,"event_type":2,"ext_span_id":"7-1","duration_ns":50,"output_tokens":150,"logs":["结束"]}
@@ -1010,47 +1010,6 @@ fn durable_uses_disk_vector_index_and_survives_restart_without_rebuild() {
     );
     assert_eq!(sim[0].0.duration_ns, Some(200), "折叠出完整 span");
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn ingest_otlp_end_to_end_folds_genai_span() {
-    // 生态入口端到端:OTLP/HTTP JSON(GenAI 约定)→ 适配器 → ingest → 折叠 → 读回。
-    let otlp = r#"{"resourceSpans":[{"scopeSpans":[{"spans":[{
-        "traceId":"5b8efff798038103d269b633813fc60c",
-        "spanId":"eee19b7ec3c1b174",
-        "name":"chat qwen3",
-        "startTimeUnixNano":"1700000000000000000",
-        "endTimeUnixNano":"1700000000500000000",
-        "status":{"code":2},
-        "attributes":[
-          {"key":"gen_ai.request.model","value":{"stringValue":"qwen3"}},
-          {"key":"gen_ai.usage.input_tokens","value":{"intValue":"1200"}},
-          {"key":"gen_ai.usage.output_tokens","value":{"intValue":"340"}},
-          {"key":"gen_ai.agent.name","value":{"stringValue":"风控研判"}}
-        ]
-    }]}]}]}"#;
-    let store = Arc::new(CapturingStore::default());
-    let wc = WriteCoordinator::new(store);
-    wc.ingest_otlp(otlp).unwrap();
-
-    let snap = wc.pin_snapshot();
-    let spans = wc.read_spans(&snap);
-    assert_eq!(spans.len(), 1, "start+end 折叠成一条完整 span");
-    let s = &spans[0];
-    // 属性(来自 start)与状态/耗时(来自 end)都折叠进同一条
-    assert_eq!(s.model.as_deref(), Some("qwen3"));
-    assert_eq!(s.input_tokens, Some(1200));
-    assert_eq!(s.output_tokens, Some(340));
-    assert_eq!(s.agent_name.as_deref(), Some("风控研判"));
-    assert_eq!(s.status, Some(1), "OTLP Error → status=1");
-    assert_eq!(s.duration_ns, Some(500_000_000));
-    assert_eq!(s.event_count, 2);
-
-    // 复用既有聚合:OTLP 灌进来的数据照样能按 agent 归因成本。
-    let ac = wc.cost_by_agent(&snap, &TraceQuery::all());
-    assert_eq!(ac.len(), 1);
-    assert_eq!(ac[0].agent_name, "风控研判");
-    assert_eq!(ac[0].input_tokens, 1200);
 }
 
 #[test]

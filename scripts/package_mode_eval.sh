@@ -2,10 +2,10 @@
 # Fuju Trace package-mode eval.
 #
 # Covers the public package shapes that users install or embed:
-#   - Python fuju_trace facade: connect(url/path), DbExporter, HTTP client
+#   - Python fuju_trace facade: connect(path/VexDB), DbExporter
 #   - TypeScript tracing SDK
 #   - Rust tracing SDK
-#   - Python fuju-trace-db embedded DB, FastAPI router, serve worker guard
+#   - Python fuju-trace-db embedded DB
 #   - Rust fuju-trace-db embedded crate
 #   - Node @fuju/trace-db embedded package
 

@@ -117,10 +117,6 @@ impl FujuTraceDb {
         self.route_json("POST", "/v1/ingest", events_json)
     }
 
-    pub fn ingest_otlp_json(&self, otlp_json: &str) -> Result<String> {
-        self.route_json("POST", "/v1/traces", otlp_json)
-    }
-
     pub fn search(&self, query: &SearchQuery) -> Result<String> {
         self.search_json(&query.to_json())
     }

@@ -2,7 +2,7 @@
 
 This package embeds the Rust Fuju Trace engine in the current Python process.
 It does not parse WAL, manifest, or segment files in Python and it does not
-start a local HTTP server. All operations go through the same EngineJsonApi
+open an embedded database. All operations go through the same EngineJsonApi
 boundary used by the Node package.
 """
 from __future__ import annotations
@@ -346,9 +346,6 @@ class FujuTraceDB:
 
     def ingest(self, events: list[Mapping[str, Any]], *, tenant_id: TenantId | None = None) -> Any:
         return self.route_json("POST", "/v1/ingest", events, tenant_id=tenant_id)
-
-    def ingest_otlp(self, body: Mapping[str, Any] | str, *, tenant_id: TenantId | None = None) -> Any:
-        return self.route_json("POST", "/v1/traces", body, tenant_id=tenant_id)
 
     def search(self, query: Mapping[str, Any] | None = None, *, tenant_id: TenantId | None = None, **kwargs: Any) -> Any:
         body = dict(query or {})

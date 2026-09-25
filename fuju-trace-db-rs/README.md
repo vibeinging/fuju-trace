@@ -22,8 +22,7 @@ It is an embedded crate, not a remote deployment server. Multiple processes on
 the same machine may open the same local data directory; the engine serializes
 open/write paths with internal data-dir locks and protects cross-process reader
 snapshots from physical segment reclaim. Do not share one data directory across
-machines or unreliable network filesystems. For multi-host deployments, run a
-Fuju Trace server process and send requests to it over HTTP.
+machines or unreliable network filesystems. For multi-host deployments, use the VexDB adapter or another shared database backend.
 
 ## Install
 

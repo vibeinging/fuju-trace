@@ -631,7 +631,6 @@ export declare class FujuTraceDB {
   static open(pathOrOptions: string | OpenOptions): Promise<FujuTraceDB>;
 
   ingest(events: SpanEvent[], options?: IngestOptions): Promise<IngestResult>;
-  ingestOtlp(body: unknown, options?: TenantOptions): Promise<IngestResult>;
   search<T = SearchHit>(query?: SearchQuery, options?: TenantOptions): Promise<T[]>;
   indexEmbedding(input: EmbeddingInput, options?: TenantOptions): Promise<IndexEmbeddingsResult>;
   indexEmbeddings(items: EmbeddingInput[], options?: TenantOptions): Promise<IndexEmbeddingsResult>;

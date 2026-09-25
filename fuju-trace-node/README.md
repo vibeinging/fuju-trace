@@ -253,8 +253,7 @@ uses reader pins so `reclaim()` does not delete segment files while another
 process is reading a snapshot.
 
 Do not share one `dataDir` across machines or unreliable network filesystems.
-For multi-host deployments, run one Fuju server process and send trace data
-over HTTP.
+For multi-host deployments, use the VexDB adapter or another shared database backend.
 
 IDs passed to `db.ingest()` are treated as business IDs, whether they are JSON
 strings or numbers. Fuju keeps internal numeric IDs for indexing and stores

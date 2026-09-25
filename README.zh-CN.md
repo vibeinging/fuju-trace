@@ -1,144 +1,76 @@
 # Fuju Trace
 
-**让 AI Agent 的运行过程可回放、可搜索。** Fuju Trace 把一次运行中的模型调用、工具调用、输出、错误和 token 用量连成完整记录。先接入轻量 SDK，就能复盘发生了什么、查找相似运行；需要在应用内查询时再加入嵌入式存储。
+Fuju Trace 是 AI Agent 的 Trace SDK 和可嵌入的 Trace 数据层。应用在进程内创建 trace/span，并把事件直接写入 VexDB 或本地 TraceDB；查询也直接走数据库适配器。它不需要单独启动 Trace 服务。
 
-中文 · [English](README.md) · [MIT 许可证](LICENSE)
+[English](README.md) · [VexDB 参数与使用](fuju-trace-vexdb/README.zh-CN.md)
 
-> **仓库状态：** Fuju Trace 已有独立的公开源码仓库。新的 Python 和 npm 包名已经配置，尚未发布。下面的源码快速体验不依赖包仓库。已验证的能力与发布状态见[当前状态](docs/CURRENT_STATE.md)。
-
-![Fuju Trace 回放控制台](docs/images/console-overview.png)
-
-## 为什么用 Fuju Trace
-
-log 记录一件事发生了。排查 Agent 的一次运行，还需要知道哪些步骤属于同一次运行、步骤之间如何调用，以及结果在哪一步发生变化。Fuju Trace 用 trace 和 span 保留这些关系；每个 span 仍可附带 log。
-
-- **解释结果和失败：** 按 session 回放嵌套的模型与工具调用，查看输入输出、错误、耗时和 token 用量。
-- **从历史运行中找规律：** 用中文 BM25、带过滤的向量或混合检索找相似案例，并按租户、Agent、状态、时间和支持的属性缩小范围。可用标注和数据集关联保存评测所需的案例。
-- **按需要选择接入深度：** Python、TypeScript、Rust SDK 和 OTLP/HTTP JSON 都能写入；查询可以走本地 HTTP 服务，也可以把同一 Rust 引擎嵌入 Python、Node/Electron 或 Rust 应用。
-- **正确处理重试与重启：** 确定性的事件 ID 用于识别重复事件；持久化引擎有 WAL、快照和恢复机制，核心 Rust 工作区不依赖第三方 crate。
-
-Fuju Trace 保存执行证据；提示词优化和独立验收在另一个 `fuju-rsi` 项目中。
-
-## 从源码快速体验
-
-下面的命令都从仓库根目录执行。需要 Rust 1.80+ 和 Python 3.8+。示例服务自带演示 trace，数据保存在**内存中**；需要持久化时使用嵌入式 DB 或 Python DB 服务。
-
-**终端 1：启动示例服务。**
+## 推荐接入：VexDB
 
 ```bash
-cargo run --offline --manifest-path fuju-trace-engine/Cargo.toml \
-  -p fuju-trace-engine --example server
+pip install 'fuju-trace[vexdb]==0.1.9'
 ```
-
-**终端 2：用 Python SDK 写入一条 trace，再搜索它。**
-
-```bash
-PYTHONPATH=fuju-trace-sdk/python python3 - <<'PY'
-from fuju_trace import HttpExporter, Tracer
-
-tracer = Tracer(
-    exporter=HttpExporter("http://127.0.0.1:7878/v1/ingest", tenant_id=1),
-    node_id=1,
-)
-with tracer.trace("风控复核", tenant_id=1) as trace:
-    with trace.span("查询交易") as span:
-        span.log("疑似盗刷")
-tracer.close()
-PY
-
-curl -fsS http://127.0.0.1:7878/v1/search \
-  -H 'Content-Type: application/json' \
-  -H 'X-Tenant-Id: 1' \
-  -d '{"text":"盗刷","k":10}'
-```
-
-`tracer.close()` 会发送缓冲中的事件。写入和查询使用相同的 `X-Tenant-Id`。线格式、搜索过滤、鉴权和 OTLP 入口见 [API 文档](docs/API_REFERENCE.md)。
-
-### 打开回放控制台
-
-全新源码检出需要先构建前端，Rust 二进制才能内嵌页面。从仓库根目录执行以下命令，**然后重启**示例服务：
-
-```bash
-npm --prefix fuju-trace-console ci
-VITE_API=http npm --prefix fuju-trace-console run build
-python3 scripts/sync_console.py
-```
-
-打开 [http://127.0.0.1:7878/](http://127.0.0.1:7878/)。控制台与其他客户端使用同一套 `/v1/*` API。
-
-## 选择接入方式
-
-下表是**计划发布的包名**，目前还不能当作已发布的安装目标。当前可使用链接中的源码包。
-
-| 你的应用 | 包名 / 源码 | 用途 |
-|---|---|---|
-| Python 只向服务发送 trace | `fuju-trace` · [Python SDK](fuju-trace-sdk/python/README.md) | 只依赖标准库的轻量打点 |
-| TypeScript 只向服务发送 trace | `@fuju/trace-sdk` · [TypeScript SDK](fuju-trace-sdk/typescript/README.md) | 浏览器 / Node 打点 |
-| Rust 只向服务发送 trace | [Rust SDK](fuju-trace-sdk/rust/README.md) | 只依赖标准库的打点 |
-| Python 本地写入和查询 | `fuju-trace` + `fuju-trace-db` · [Python DB](fuju-trace-db-python/README.md) | 嵌入式 DB、可选 FastAPI 服务 |
-| Node 或 Electron 本地写入和查询 | `@fuju/trace-db` · [Node DB](fuju-trace-node/README.md) | 通过 Node-API 嵌入 Rust 引擎 |
-| Rust 本地写入和查询 | [Rust DB](fuju-trace-db-rs/README.md) | 嵌入式引擎封装 |
-| 已使用 OpenTelemetry/OpenInference | `POST /v1/traces` · [API 文档](docs/API_REFERENCE.md) | OTLP/HTTP JSON 摄入 |
-
-例如，从仓库根目录安装 Python 源码包以使用嵌入式存储：
-
-```bash
-python3 -m pip install ./fuju-trace-sdk/python ./fuju-trace-db-python
-```
-
-`fuju-trace-db` 会构建 Rust 原生扩展。安装后，每个进程打开一次 DB 并复用：
 
 ```python
+import os
 from fuju_trace import DbExporter, Tracer, connect
 
-with connect(path="./fuju-trace-data", tenant_id=1) as db:
+with connect(vexdb_dsn=os.environ["VEXDB_DSN"], tenant_id=1,
+             vector_dim=3, initialize=True) as db:
     tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
-    with tracer.trace("风控复核", tenant_id=1) as trace:
-        with trace.span("查询交易") as span:
-            span.log("疑似盗刷")
+    with tracer.trace("风控", tenant_id=1) as trace:
+        with trace.span("研判") as span:
+            span.log("疑似盗刷，需要人工复核")
     tracer.close()
     print(db.search(text="盗刷", k=10))
 ```
 
-FastAPI、ARQ、Celery 应在每个进程启动时初始化一次、退出时关闭一次；具体做法见 [Python DB 指南](fuju-trace-db-python/README.md)。Node/Electron 本地包需先构建 native 模块，再在 [`fuju-trace-node/`](fuju-trace-node/README.md) 执行 `npm run pack:verify`。
+`vector_dim` 必须等于业务 embedding 模型维度。可以只做文本检索，不提供 embedding；需要向量时由业务模型生成并调用 `db.set_embedding(...)`。`initialize=True` 首次建表和索引，后续打开可省略。连接可用 `vexdb_dsn` 或 `vexdb_params`，不要把密码写入代码仓库。适配器使用通用 `psycopg2` 协议；安装 extra 时已存在的兼容 `psycopg2-binary` 可以复用。
 
-**部署边界：** 嵌入式模式支持同一台机器上的多个进程共享**本地**数据目录。多台机器或跨主机容器应运行一个服务，通过 HTTP 接入；不要在网络文件系统上共享嵌入式数据目录。
+高并发写入可用 `BufferedDbExporter` 批量落库，并根据业务要求调用 `flush()` 建立可见性边界；同步确认写入则使用 `DbExporter`。同一进程的多个 session 可以共享同一个 VexDB store。不同进程或机器需要分配不同的 `node_id`。
 
-## 工作原理
+## 本地嵌入式数据库
 
-SDK 和 OTLP 事件通过 HTTP 或进程内 `EngineJsonApi` 进入引擎。引擎把事件写入 WAL 和数据段，读取时再把 start、log、end 事件合成完整 span。搜索、回放和控制台使用同一份 trace 数据。事件 ID 按以下方式确定：
+从源码仓库构建 native Python 绑定：
 
-```text
-event_id = hash(ext_span_id, seq, event_type)
+```bash
+python -m pip install -e ./fuju-trace-sdk/python -e ./fuju-trace-db-python
 ```
 
-因此重试和 WAL 重放能识别同一个事件。检索侧默认使用中文词级分词与 BM25，以及落盘的图式向量索引；混合检索用 RRF 合并两路结果。需要向量检索时，由调用方提供 embedding；引擎本身不调用 embedding 模型。
+```python
+from fuju_trace import DbExporter, Tracer, connect
 
-Rust 引擎主体只使用标准库；各语言原生绑定和可选存储适配放在工作区外。已测试能力与尚未完成的生产能力见[当前状态](docs/CURRENT_STATE.md)。
+with connect(path="./trace-data", tenant_id=1) as db:
+    tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
+    with tracer.trace("一次请求", tenant_id=1) as trace:
+        with trace.span("调用工具") as span:
+            span.log("完成")
+    tracer.close()
+    print(db.search(text="完成", k=10))
+```
 
-## 开发与验证
+本地引擎用 Rust 标准库实现 WAL、崩溃恢复、trace 折叠、中文 BM25、向量索引和过滤查询。同机多进程可以共享本地目录；跨主机共享目录不在支持范围内。Node/Electron 可以使用 `@fuju/trace-db`，Rust 可以使用 `fuju-trace-db`。
 
-从仓库根目录执行：
+## 技术特点
+
+- `event_id` 由 `ext_span_id + seq + event_type` 确定，Python、TypeScript、Rust SDK 与引擎逐字节一致，重复事件只计一次。
+- start、log、end 事件在读取时折叠成 span；本地数据库通过 WAL 和不可变段恢复。
+- 文本、向量和混合检索可按 tenant、trace、时间、agent、状态及属性过滤。VexDB 适配器使用其原生 BM25 与向量索引，本地引擎使用自己的索引。
+- SDK 与存储通过 Exporter/数据库适配器连接。基础 Python SDK 没有数据库运行时依赖；选择 `db` 或 `vexdb` extra 才安装对应后端。
+
+## 仓库目录
+
+- `fuju-trace-sdk/`：Python、TypeScript、Rust 打点 SDK。
+- `fuju-trace-vexdb/`：VexDB 事件存储、span 读模型和检索适配器。
+- `fuju-trace-engine/`：本地 Rust TraceDB 引擎。
+- `fuju-trace-db-python/`、`fuju-trace-node/`、`fuju-trace-db-rs/`：进程内数据库绑定。
+- `docs/CURRENT_STATE.md`：已实现范围和限制。
+
+## 验证
 
 ```bash
 cargo test --offline --manifest-path fuju-trace-engine/Cargo.toml
-PYTHONPATH=fuju-trace-sdk/python python3 fuju-trace-sdk/python/tests/test_sdk.py
-python3 scripts/check_release_versions.py
+./scripts/package_mode_eval.sh
+./tests/crash_recovery_kill9.sh 3
 ```
 
-各包构建、干净环境验证、升级测试和发布步骤见 [AGENTS.md](AGENTS.md)。公开源码仓库不等于已经发布 Python 和 npm 包。
-
-## 项目目录
-
-- [`fuju-trace-engine/`](fuju-trace-engine/) — Rust 引擎和 HTTP 示例
-- [`fuju-trace-sdk/`](fuju-trace-sdk/) — Python、TypeScript、Rust SDK
-- [`fuju-trace-console/`](fuju-trace-console/) — 回放页面
-- [`fuju-trace-db-python/`](fuju-trace-db-python/)、[`fuju-trace-node/`](fuju-trace-node/)、[`fuju-trace-db-rs/`](fuju-trace-db-rs/) — 嵌入式 DB 包
-- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — HTTP 和嵌入式 JSON 契约
-- [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — 当前实现与边界
-
-`fuju-rsi` 是独立项目。它的可选遥测插件在 Fuju Trace 可用时上报事件；不可用时写本地遥测日志。Fuju Trace 的运行不依赖 RSI。
-
-## 许可证
-
-[MIT](LICENSE)
+MIT 许可。当前版本是 alpha；部署前请用自己的数据分布和负载验证查询计划、召回及写入延迟。

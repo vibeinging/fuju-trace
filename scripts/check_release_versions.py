@@ -63,7 +63,6 @@ def main() -> int:
     expect_name(read_toml(ROOT / "fuju-trace-db-python/Cargo.toml")["package"]["name"], "fuju-trace-db-python", "Python native crate")
     expect_name(node_package["napi"]["binaryName"], "fuju-trace-db", "Node native binary")
     expect_name(python_sdk_package["scripts"], {"fuju-trace": "fuju_trace.cli:main"}, "Python SDK CLI")
-    expect_name(python_db_package["scripts"]["fuju-trace-db"], "fuju_trace_db.cli:main", "Python DB CLI")
     tag_version = None
     if args.tag:
         if not args.tag.startswith("v"):
@@ -124,13 +123,6 @@ def main() -> int:
         if not lock_entry:
             raise SystemExit(f"package-lock is missing optional package {name}")
         versions[f"{name} package-lock"] = lock_entry["version"]
-
-    db_extra = python_sdk_package.get("optional-dependencies", {}).get("db", [])
-    expected_db_requirement = f"fuju-trace-db=={expected}"
-    if db_extra != [expected_db_requirement]:
-        raise SystemExit(
-            f"Python SDK db extra must be [{expected_db_requirement!r}], found {db_extra!r}"
-        )
 
     vexdb_extra = python_sdk_package.get("optional-dependencies", {}).get("vexdb", [])
     expected_vexdb_requirement = f"fuju-trace-vexdb[driver]=={expected}"

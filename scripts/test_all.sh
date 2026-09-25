@@ -4,13 +4,11 @@
 # 默认跑主线必需测试：
 #   - Rust 引擎离线测试
 #   - package-mode eval（Python/TypeScript SDK + Node/Python/Rust 嵌入式 DB）
-#   - 控制台数据层测试 + 构建
 #
 # 可选参数：
 #   --skip-node       跳过 Node 嵌入式 DB
 #   --skip-python-db  跳过 Python 嵌入式 DB
 #   --skip-rust-db    跳过 Rust 嵌入式 DB
-#   --skip-ui         跳过控制台
 #   --crash           额外跑 kill -9 崩溃恢复测试（默认 3 轮，可用 --crash-rounds N）
 
 set -euo pipefail
@@ -19,7 +17,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_NODE=1
 RUN_PYTHON_DB=1
 RUN_RUST_DB=1
-RUN_UI=1
 RUN_CRASH=0
 CRASH_ROUNDS=3
 
@@ -35,10 +32,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-rust-db)
       RUN_RUST_DB=0
-      shift
-      ;;
-    --skip-ui)
-      RUN_UI=0
       shift
       ;;
     --crash)
@@ -90,17 +83,9 @@ else
   run "$ROOT_DIR/scripts/package_mode_eval.sh" "${PACKAGE_ARGS[@]}"
 fi
 
-if [[ "$RUN_UI" -eq 1 ]]; then
-  need_dir "$ROOT_DIR/fuju-trace-console"
-  pushd "$ROOT_DIR/fuju-trace-console" >/dev/null
-  run npm test
-  run npm run build
-  popd >/dev/null
-fi
-
 if [[ "$RUN_CRASH" -eq 1 ]]; then
   pushd "$ROOT_DIR/fuju-trace-engine" >/dev/null
-  run cargo build -p fuju-trace-engine --example server_durable --release
+  run cargo build -p fuju-trace-engine --example crash_worker --release
   popd >/dev/null
   pushd "$ROOT_DIR" >/dev/null
   run ./tests/crash_recovery_kill9.sh "$CRASH_ROUNDS"

@@ -5,10 +5,10 @@ import atexit
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .client import connect
-from .exporter import BufferedDbExporter, DbExporter, Exporter, HttpExporter, NoopExporter, SpoolDbExporter
+from .exporter import BufferedDbExporter, DbExporter, Exporter, NoopExporter, SpoolDbExporter
 from .tracer import Tracer
 
 
@@ -25,7 +25,6 @@ class FujuTraceRuntime:
     mode: str = "unknown"
     data_dir: str | None = None
     spool_dir: str | None = None
-    url: str | None = None
     requested_mode: str | None = None
 
     def close(self, timeout: float | None = 5.0) -> None:
@@ -49,7 +48,6 @@ class FujuTraceRuntime:
             "requested_mode": self.requested_mode,
             "data_dir": self.data_dir,
             "spool_dir": self.spool_dir,
-            "url": self.url,
             "queue": exporter.get("queue", {"queued": None, "max": None}),
             "sent": exporter.get("sent"),
             "written": exporter.get("written"),
@@ -67,14 +65,11 @@ def _path_text(value: str | Path | None) -> str | None:
 
 def _requested_mode(
     *,
-    url: str | None,
     path: str | Path | None,
     data_dir: str | Path | None,
     spool_dir: str | Path | None,
     mode: str,
 ) -> str:
-    if url is not None:
-        return "http"
     normalized = mode.replace("-", "_")
     if normalized == "spool" or spool_dir is not None:
         return "spool"
@@ -133,22 +128,18 @@ _runtime: FujuTraceRuntime | None = None
 
 def init_fuju_trace(
     *,
-    url: str | None = None,
     path: str | Path | None = None,
     data_dir: str | Path | None = None,
     spool_dir: str | Path | None = None,
     mode: str = "buffered",
     tenant_id: int | str | None = None,
     node_id: int | None = None,
-    token: str | None = None,
-    headers: Mapping[str, str] | None = None,
     fail_open: bool = True,
     register_atexit: bool = True,
     **options: Any,
 ) -> FujuTraceRuntime:
     """初始化服务端 tracer。
 
-    - `url=...`：发到独立 Fuju Trace server，使用 `HttpExporter`。
     - `path=...` / `data_dir=...`：打开 embedded DB，默认使用 `BufferedDbExporter`。
     - `mode="spool"` + `spool_dir=...`：只写本地 spool，不打开 embedded DB。
     - `fail_open=True`：初始化失败时返回 `NoopExporter`，主服务继续启动。
@@ -157,15 +148,12 @@ def init_fuju_trace(
     global _runtime
     try:
         runtime = _init_fuju_trace_strict(
-            url=url,
             path=path,
             data_dir=data_dir,
             spool_dir=spool_dir,
             mode=mode,
             tenant_id=tenant_id,
             node_id=node_id,
-            token=token,
-            headers=headers,
             register_atexit=register_atexit,
             **options,
         )
@@ -180,7 +168,6 @@ def init_fuju_trace(
             error=err,
             mode="noop",
             requested_mode=_requested_mode(
-                url=url,
                 path=path,
                 data_dir=data_dir,
                 spool_dir=spool_dir,
@@ -188,7 +175,6 @@ def init_fuju_trace(
             ),
             data_dir=_path_text(data_dir if data_dir is not None else path),
             spool_dir=_path_text(spool_dir),
-            url=url,
         )
     with _runtime_lock:
         _runtime = runtime
@@ -199,44 +185,15 @@ def init_fuju_trace(
 
 def _init_fuju_trace_strict(
     *,
-    url: str | None,
     path: str | Path | None,
     data_dir: str | Path | None,
     spool_dir: str | Path | None,
     mode: str,
     tenant_id: int | str | None,
     node_id: int | None,
-    token: str | None,
-    headers: Mapping[str, str] | None,
     register_atexit: bool,
     **options: Any,
 ) -> FujuTraceRuntime:
-    if url is not None:
-        if path is not None or data_dir is not None or spool_dir is not None:
-            raise ValueError("url mode cannot be combined with path/data_dir/spool_dir")
-        base_url = url.rstrip("/")
-        if base_url.endswith("/v1/ingest"):
-            ingest_url = base_url
-        elif base_url.endswith("/v1"):
-            ingest_url = f"{base_url}/ingest"
-        else:
-            ingest_url = f"{base_url}/v1/ingest"
-        exporter = HttpExporter(
-            ingest_url,
-            token=token,
-            tenant_id=tenant_id,
-            headers=dict(headers or {}),
-            timeout=options.pop("timeout", 5.0),
-            max_batch=options.pop("max_batch", 256),
-        )
-        return FujuTraceRuntime(
-            tracer=Tracer(exporter=exporter, node_id=node_id),
-            exporter=exporter,
-            mode="http",
-            requested_mode="http",
-            url=ingest_url,
-        )
-
     normalized_mode = mode.replace("-", "_")
     if normalized_mode == "spool":
         if spool_dir is None:
@@ -257,7 +214,7 @@ def _init_fuju_trace_strict(
 
     local_path = data_dir if data_dir is not None else path
     if local_path is None:
-        raise ValueError("init_fuju_trace requires url, path/data_dir, or mode='spool' with spool_dir")
+        raise ValueError("init_fuju_trace requires path/data_dir or mode='spool' with spool_dir")
     db = connect(path=local_path, tenant_id=tenant_id, **options.pop("connect_options", {}))
     if normalized_mode == "direct":
         exporter = DbExporter(db, tenant_id=tenant_id)

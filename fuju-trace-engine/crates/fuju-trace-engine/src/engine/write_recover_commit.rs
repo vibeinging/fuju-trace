@@ -412,7 +412,7 @@ impl WriteCoordinator {
 
     /// 生产可观测（§3.1）：聚合所有关键运行态，供 /metrics 端点输出。
     /// 返回的字符串是 Prometheus 文本格式（每行一个 metric + 注释），零依赖、好排查。
-    /// 返回 owned String，调用者直接写进 HTTP body。
+    /// 返回 owned String，调用者可以直接传给进程内绑定。
     pub fn metrics(&self) -> String {
         let mut out = String::with_capacity(2048);
         let version = self.current.version();

@@ -7,12 +7,9 @@ import json
 import os
 from pathlib import Path
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
-import urllib.request
 import venv
 
 
@@ -34,40 +31,6 @@ def choose_wheel(wheel_dir: Path) -> Path:
     return wheels[0].resolve()
 
 
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def wait_for_health(port: int, process: subprocess.Popen[str]) -> None:
-    url = f"http://127.0.0.1:{port}/v1/healthz"
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise RuntimeError(f"fuju-trace-db serve exited early\nstdout:\n{stdout}\nstderr:\n{stderr}")
-        try:
-            with urllib.request.urlopen(url, timeout=1) as response:
-                if response.status == 200 and json.load(response) == {"ok": True}:
-                    return
-        except Exception:
-            time.sleep(0.1)
-    raise RuntimeError(f"timed out waiting for {url}")
-
-
-def post_json(port: int, path: str, payload: object) -> object:
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "X-Tenant-Id": "42"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=5) as response:
-        assert response.status == 200
-        return json.load(response)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheel-dir", type=Path, required=True)
@@ -79,8 +42,7 @@ def main() -> int:
         environment = work / "venv"
         venv.EnvBuilder(with_pip=True).create(environment)
         python = venv_command(environment, "python")
-        cli = venv_command(environment, "fuju-trace-db")
-        run([str(python), "-m", "pip", "install", "--disable-pip-version-check", f"{wheel}[server]"])
+        run([str(python), "-m", "pip", "install", "--disable-pip-version-check", str(wheel)])
 
         consumer = work / "consumer.py"
         consumer.write_text(
@@ -112,51 +74,7 @@ with tempfile.TemporaryDirectory() as tmp:
             encoding="utf-8",
         )
         run([str(python), str(consumer)], cwd=work)
-        run([str(cli), "--help"], cwd=work, capture_output=True)
 
-        port = free_port()
-        server_data = work / "server-data"
-        process = subprocess.Popen(
-            [str(cli), "serve", "--data-dir", str(server_data), "--bind", f"127.0.0.1:{port}"],
-            cwd=work,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        try:
-            wait_for_health(port, process)
-            ingest = post_json(
-                port,
-                "/v1/ingest",
-                [{
-                    "trace_id": "server-wheel-run",
-                    "span_id": "server-wheel-span",
-                    "session_id": "server-wheel-session",
-                    "ts": 1,
-                    "seq": 1,
-                    "event_type": 3,
-                    "ext_span_id": "server-wheel-span",
-                    "status": 0,
-                    "attrs": {"project_id": "wheel-server", "skill": "release"},
-                    "logs": ["CLI server 盗刷验证"],
-                }],
-            )
-            assert ingest["ingested"] == 1
-            hits = post_json(
-                port,
-                "/v1/search",
-                {"text": "盗刷", "filter": {"attrs": {"project_id": "wheel-server"}}},
-            )
-            assert len(hits) == 1
-            assert hits[0]["external_trace_id"] == "server-wheel-run"
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=10)
         print(f"Verified fuju-trace-db wheel in clean consumer: {wheel.name}")
         return 0
     finally:

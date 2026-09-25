@@ -1,5 +1,5 @@
 //! 极小 JSON 解析器（只用标准库）+ `parse_wire_batch`：把 SDK `to_wire()` 输出的 JSON 批量
-//! 解析成 `WireRecord`。这是网络网关的解析层（HTTP server 收到 body 后调它）。
+//! 解析成 `WireRecord`。这是进程内 JSON API 的事件解析层。
 //!
 //! 为什么自己写：保持引擎零外部依赖、离线可编译。真实部署嫌烦可换 serde_json，接口不变。
 //!
@@ -17,7 +17,7 @@ use crate::WireRecord;
 use fuju_trace_core::event::fnv1a64;
 
 /// JSON 值。数字存原始字面量字符串（避免 f64 精度问题）。
-/// `pub(crate)` 是给 OTLP 适配器（`otlp.rs`）复用这套零依赖解析器。
+/// `pub(crate)` 允许进程内 JSON API 复用这套零依赖解析器。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Json {
     Null,
@@ -70,7 +70,7 @@ impl Json {
             _ => Vec::new(),
         }
     }
-    /// 数组元素（非数组 → 空切片）。OTLP 适配器遍历 resourceSpans/scopeSpans/spans 用。
+    /// 数组元素（非数组 → 空切片）。进程内 JSON 解析时用于读取数组字段。
     pub(crate) fn as_array(&self) -> &[Json] {
         match self {
             Json::Arr(items) => items,

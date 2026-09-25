@@ -14,12 +14,10 @@ from fuju_trace import (  # noqa: E402
     CollectingExporter,
     DbExporter,
     EventType,
-    HttpExporter,
     NoopExporter,
     SpoolConsumer,
     SpoolDbExporter,
     Tracer,
-    FujuTraceClient,
     connect,
     event_id,
     get_fuju_trace_runtime,
@@ -235,105 +233,6 @@ def test_batch_exporter_hands_off_whole_batch_once():
     be.close()  # flush 余下的
     assert sink.single == 0, "整批走 export_batch,不逐条 export"
     assert sink.batches == [3, 3, 1], "攒满 3 各发一批,剩 1 在 close 时发"
-
-
-def test_http_exporter_sends_auth_and_tenant_headers():
-    from fuju_trace.event import SpanEvent  # noqa: E402
-    import urllib.request  # noqa: E402
-
-    captured = {}
-    old_urlopen = urllib.request.urlopen
-
-    class Resp:
-        def read(self):
-            return b"{}"
-
-    def fake_urlopen(req, timeout):
-        captured["timeout"] = timeout
-        captured["headers"] = dict(req.header_items())
-        return Resp()
-
-    try:
-        urllib.request.urlopen = fake_urlopen
-        exp = HttpExporter("http://example.invalid/v1/ingest", token="secret", tenant_id=7, timeout=1.5)
-        exp.export_batch([
-            SpanEvent(trace_id=1, span_id=1, parent_span_id=None, seq=1,
-                      event_type=EventType.SPAN_START, ext_span_id="s1", ts=1)
-        ])
-    finally:
-        urllib.request.urlopen = old_urlopen
-
-    assert captured["timeout"] == 1.5
-    headers = {k.lower(): v for k, v in captured["headers"].items()}
-    assert headers["authorization"] == "Bearer secret"
-    assert headers["x-tenant-id"] == "7"
-
-
-def test_http_exporter_buffers_failed_batches_and_retries():
-    from fuju_trace.event import SpanEvent  # noqa: E402
-    import urllib.request  # noqa: E402
-
-    calls = {"n": 0}
-    bodies = []
-    errors = []
-    old_urlopen = urllib.request.urlopen
-
-    class Resp:
-        def read(self):
-            return b"{}"
-
-    def fake_urlopen(req, timeout):
-        calls["n"] += 1
-        bodies.append(req.data)
-        if calls["n"] == 1:
-            raise OSError("network down")
-        return Resp()
-
-    ev = SpanEvent(trace_id=1, span_id=1, parent_span_id=None, seq=1,
-                   event_type=EventType.SPAN_START, ext_span_id="s1", ts=1)
-    try:
-        urllib.request.urlopen = fake_urlopen
-        exp = HttpExporter("http://example.invalid/v1/ingest", max_batch=10, on_error=lambda err, dropped: errors.append((str(err), dropped)))
-        exp.export_batch([ev])
-        assert exp.buffered_count() == 1
-        assert errors == [("network down", 0)]
-        exp.flush()
-        assert exp.buffered_count() == 0
-        assert exp.sent_count() == 1
-        assert calls["n"] == 2
-        assert bodies[0] == bodies[1], "失败批次应原样重试"
-    finally:
-        urllib.request.urlopen = old_urlopen
-
-
-def test_http_exporter_caps_buffer_and_reports_dropped():
-    from fuju_trace.event import SpanEvent  # noqa: E402
-    import urllib.request  # noqa: E402
-
-    errors = []
-    old_urlopen = urllib.request.urlopen
-
-    def fake_urlopen(req, timeout):
-        raise OSError("still down")
-
-    def ev(i):
-        return SpanEvent(trace_id=1, span_id=i, parent_span_id=None, seq=1,
-                         event_type=EventType.SPAN_START, ext_span_id=f"s{i}", ts=i)
-
-    try:
-        urllib.request.urlopen = fake_urlopen
-        exp = HttpExporter(
-            "http://example.invalid/v1/ingest",
-            max_batch=10,
-            max_buffered=2,
-            on_error=lambda err, dropped: errors.append(dropped),
-        )
-        exp.export_batch([ev(1), ev(2), ev(3)])
-        assert exp.buffered_count() == 2
-        assert exp.dropped_count() == 1
-        assert errors == [1], "超过上限应丢最老事件并上报 dropped"
-    finally:
-        urllib.request.urlopen = old_urlopen
 
 
 def test_db_exporter_writes_tracer_events_to_embedded_db_handle():
@@ -1065,48 +964,13 @@ def test_cli_consume_spool_once_writes_embedded_db():
     assert fake_db.calls[0][0][0]["event_type"] == EventType.SPAN_START.value
 
 
-def test_fuju_trace_client_routes_json_with_auth_and_tenant_headers():
-    import urllib.request  # noqa: E402
-
-    captured = {}
-    old_urlopen = urllib.request.urlopen
-
-    class Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return None
-
-        def read(self):
-            return b'[{"trace_id":1}]'
-
-    def fake_urlopen(req, timeout):
-        captured["url"] = req.full_url
-        captured["timeout"] = timeout
-        captured["headers"] = dict(req.header_items())
-        captured["body"] = req.data
-        return Resp()
-
+def test_connect_selects_optional_embedded_package():
     try:
-        urllib.request.urlopen = fake_urlopen
-        client = FujuTraceClient("http://example.test", token="secret", tenant_id=3, timeout=1.25)
-        result = client.search(text="盗刷", k=1)
-    finally:
-        urllib.request.urlopen = old_urlopen
-
-    assert result == [{"trace_id": 1}]
-    assert captured["url"] == "http://example.test/v1/search"
-    assert captured["timeout"] == 1.25
-    headers = {k.lower(): v for k, v in captured["headers"].items()}
-    assert headers["authorization"] == "Bearer secret"
-    assert headers["x-tenant-id"] == "3"
-    assert b"\\u76d7\\u5237" not in captured["body"], "body keeps readable UTF-8 JSON"
-
-
-def test_connect_selects_http_or_optional_embedded_package():
-    remote = connect("http://localhost:7878", tenant_id=1)
-    assert isinstance(remote, FujuTraceClient)
+        connect("http://localhost:7878")
+    except ValueError as err:
+        assert "HTTP connections" in str(err)
+    else:
+        raise AssertionError("HTTP URL must be rejected")
 
     opened = {}
 
@@ -1151,7 +1015,6 @@ def test_connect_path_without_embedded_package_has_install_hint():
         builtins.__import__ = real_import
 
     assert "pip install fuju-trace-db" in message
-    assert "pip install 'fuju-trace[db]'" in message
 
 
 if __name__ == "__main__":

@@ -1,236 +1,55 @@
-# Fuju Trace SDK（Python）
+# Fuju Trace Python SDK
 
-> 许可证:MIT。要求 Python ≥ 3.8。
+Python 3.8+ SDK for Agent traces. It emits deterministic events and writes them through an Exporter. The base package uses only the Python standard library.
 
-给 Agent 打点，产出与 Fuju Trace 引擎一致的 trace 事件。
-
-```
-
-python3 tests/test_sdk.py     # 含与引擎逐字节一致的 event_id、失败缓冲、HTTP header 校验
-```
-
-从仓库根目录改包形态时跑统一回归：
+## VexDB
 
 ```bash
-./scripts/package_mode_eval.sh
-```
-
-它会覆盖 `connect(url/path)`、`DbExporter`、Python embedded DB、Node/Rust embedded 包和 TypeScript SDK。
-
-## 四种用法
-
-### 1. 只在本地调试
-
-```python
-from fuju_trace import Tracer, ConsoleExporter
-
-tracer = Tracer(exporter=ConsoleExporter(), node_id=1)
-
-with tracer.trace("反洗钱筛查") as t:
-    with t.span("交易风控") as root:
-        with root.span("调用LLM研判") as child:   # 嵌套 → 自动以 root 为父
-            child.log("研判结论 需人工复核")
-            child.set_status(0)
-```
-
-嵌套 `span` 自动建父子（`parent_span_id` 进线格式 + 引擎），trace 还原成树。
-
-普通用户只传 `name`。内部技术名不适合直接展示时，再传可选的 `display_name`；`agent_name` 建议在 tracer 上配置，子 span 会自动继承：
-
-```python
-tracer = Tracer(exporter=ConsoleExporter(), node_id=1, agent_name="planner-agent")
-with tracer.trace("处理请求") as t:
-    with t.span("planner.route", display_name="规划下一步"):
-        pass
-```
-
-这里 `planner.route` 会写入内部 `span_name`，控制台优先显示“规划下一步”。`display_name` 只负责展示，不参与检索、过滤或节点合并；全空格按未设置处理。
-
-每个 span 产出三类事件：`SPAN_START`（带 span 名）+ 若干 `LOG` + `SPAN_END`（带状态+耗时）。
-`seq` 在 span 内单调递增、由客户端给定，原样进引擎、引擎绝不重补 —— 进引擎后按 `(trace, span)`
-折叠成一条完整 span。
-
-### 2. 发到运行中的 Fuju Trace server
-
-```python
-from fuju_trace import Tracer, HttpExporter
-
-tr = Tracer(exporter=HttpExporter("http://127.0.0.1:7878/v1/ingest"), node_id=1)
-with tr.trace("反洗钱筛查") as t:
-    with t.span("调用LLM研判") as s:
-        s.set_tokens(
-            input_tokens=1200,
-            output_tokens=340,
-            cache_read_tokens=0,
-            cache_write_tokens=None,
-        )
-        s.set_attributes({
-            "llm.call_site": "superagent.reasoning",
-            "llm.model_category": "chat",
-        })
-tr.close()  # flush → POST 到引擎摄入服务
-```
-
-缓存 token 的 `None` 表示模型服务没有返回该指标，`0` 表示模型服务返回了指标、但本次没有缓存读写。`set_tokens()` 和 `set_attributes()` 只更新 Span 内存状态，统一随 `SPAN_END` 上报，不会额外产生 `LOG` 或 `ATTR` 事件。
-
-也可以用统一 client 查数据：
-
-```python
-from fuju_trace import connect
-
-client = connect(url="http://127.0.0.1:7878", tenant_id=1)
-print(client.search(text="盗刷", k=10))
-```
-
-### 3. 直接写本地 embedded DB
-
-先安装 embedded DB 包，再用 `connect(path=...)`：
-
-```bash
-python -m pip install "fuju-trace[db]"
-# 或者分开安装:
-python -m pip install fuju-trace fuju-trace-db
+pip install 'fuju-trace[vexdb]==0.1.9'
 ```
 
 ```python
+import os
 from fuju_trace import DbExporter, Tracer, connect
 
-db = connect(path="./data", tenant_id=1)
-tr = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
-
-with tr.trace("反洗钱筛查", tenant_id=1) as t:
-    with t.span("调用LLM研判") as s:
-        s.log("疑似盗刷")
-
-tr.close()
-print(db.search(text="盗刷", k=10))
-db.close()
+with connect(vexdb_dsn=os.environ["VEXDB_DSN"], tenant_id=1,
+             vector_dim=3, initialize=True) as db:
+    tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
+    with tracer.trace("risk review", tenant_id=1) as trace:
+        with trace.span("investigate") as span:
+            span.log("suspicious transaction")
+    tracer.close()
+    print(db.search(text="transaction", k=10))
 ```
 
-`connect(url=...)` 返回 HTTP client；`connect(path=...)` 返回 `fuju-trace-db` 的 embedded DB handle。
+The VexDB adapter also accepts `vexdb_params={...}`. `vector_dim` must match the embedding model; text search works without supplying vectors. For batching, use `BufferedDbExporter` and call `flush()` when reads need to see all queued writes. See [the adapter guide](../../fuju-trace-vexdb/README.md).
 
-### 4. 使用 VexDB 保存和检索 Trace
+## Local embedded DB
 
 ```bash
-python -m pip install 'fuju-trace[vexdb]==0.1.9'
+python -m pip install -e ./fuju-trace-sdk/python -e ./fuju-trace-db-python
 ```
 
-这条命令安装独立的 `fuju-trace-vexdb` 适配器和已联调的通用 `psycopg2-binary` 驱动。若部署环境需要自己提供兼容的 `psycopg2` 驱动，直接安装 `fuju-trace-vexdb`，不要选 `driver` extra。连接参数和建表步骤见 [VexDB 适配器说明](../../fuju-trace-vexdb/README.zh-CN.md)。`fuju-trace[vexdb]` 需要 Python 3.10 或更新版本；基础 SDK 仍支持 Python 3.8 起。
+Use `connect(path="./trace-data", tenant_id=1)` with the same `DbExporter` and `Tracer` code. The separate `fuju-trace-db` wheel contains the Rust engine.
 
-需要把事件和检索放入 VexDB 时，可额外安装独立的 [`fuju-trace-vexdb`](../../fuju-trace-vexdb/README.md)，然后调用 `connect(vexdb_dsn=..., tenant_id=1, vector_dim=模型维度, initialize=True)`。`DbExporter` 可直接使用这个连接；VexDB 适配器当前只提供摄入、BM25/向量/混合检索和 trace/span 点读，尚未覆盖 embedded DB 的全部 API。
+## Logging and custom sinks
 
-服务端推荐不要让请求线程直接写 DB，而是用后台单写线程：
+`ConsoleExporter` prints JSON events for local debugging. `CollectingExporter` stores events in memory for tests. `BatchExporter` wraps a sink and forwards full batches. Implement `Exporter.export_batch()` to integrate another database.
 
 ```python
-from fuju_trace import init_fuju_trace, shutdown_fuju_trace
+from fuju_trace import ConsoleExporter, Tracer
 
-runtime = init_fuju_trace(path="./data/fuju_trace", tenant_id=1)
-tr = runtime.tracer
-
-# 请求线程只入队；后台线程批量写 embedded DB。
-with tr.trace("tuner-run", tenant_id=1) as t:
-    with t.span("llm-call") as s:
-        s.log("model returned")
-
-shutdown_fuju_trace()  # 等待队列 flush，并关闭 embedded DB
+tracer = Tracer(exporter=ConsoleExporter(), node_id=1, agent_name="planner")
+with tracer.trace("request", tenant_id=1) as trace:
+    with trace.span("planner.route", display_name="Plan next step") as span:
+        span.log("ready")
 ```
 
-这里的生命周期是**每个进程一次**：进程启动时初始化，所有请求和任务复用 `runtime.tracer`，进程退出时关闭。不要在每个请求、Agent run 或查询里调用 `init_fuju_trace()`；也不要在单个请求结束时调用 `tr.close()`，否则会关闭整个进程共用的 exporter。
+`name` becomes the stored `span_name`; `display_name` is optional. `agent_name` identifies the actor. `event_id` is derived from `ext_span_id`, `seq`, and `event_type` and matches the Rust and TypeScript implementations.
 
-FastAPI、ARQ 也按上述每进程生命周期接入；FastAPI 路由挂载示例见 [Python DB 指南](../../fuju-trace-db-python/README.md)。
-
-默认 `fail_open=True`。如果 native 包缺失、data dir 被锁、恢复失败，`init_fuju_trace(...)` 会返回 no-op tracer，主服务继续启动；`runtime.enabled == False`，`runtime.error` 里保留原因。
-
-服务端可以把 `runtime.health()` 接到自己的 `/healthz` 或日志里。它会返回 `enabled`、`mode`、`data_dir`、`queue`、`dropped`、`last_error` 和 `lock`；其中 `lock.active_wait_count`、`lock.wait_count`、`lock.wait_ms` 能看出是不是正在等 embedded DB 锁。
-
-同一台机器上的多 worker 服务端可以让每个 worker 都 `connect(path=...)` 打开同一个本地 data dir。引擎内部会串行化 open/write，并在写前刷新 WAL、manifest 和 metadata：
-
-```python
-from fuju_trace import init_fuju_trace
-
-# 每个本机 worker 进程都可以这样初始化。
-runtime = init_fuju_trace(path="./data/fuju_trace", tenant_id=1)
-tr = runtime.tracer
-```
-
-同机多进程试用时可以省略 `node_id`，默认取 PID 低 10 位；生产环境应为每个并行 worker 显式分配 0–1023 中不同的值，不能让所有 worker 都写 `node_id=1`。同一进程里的多个 `Tracer` 若使用相同 `node_id`，现在共用一个 ID 计数器，不会因同毫秒创建而撞号。多机器或大量 worker 不能依赖 PID 低 10 位保证全局唯一；在每个 worker 启动后创建 `Tracer`。
-
-查询也复用当前进程已经打开的 `runtime.db`，不要查询一次 open 一次：
-
-```python
-result = runtime.db.trace_search({
-    "filter": {"externalTraceId": run_id},
-    "limit": 1,
-})
-print(result["readPlan"])
-```
-
-`externalTraceId` 会走过滤索引，适合按业务 runId 查存在性或下钻。新代码看 `readPlan`，不要只看兼容字段 `scannedSpans`。buffered 写入是异步的；第一条事件到达后默认收集最多 1 秒，达到 `max_batch=256` 会提前写。根 Trace 结束会请求 writer 尽快写出当前批次；同一条业务路径刚写完就必须查到时，先调用 `runtime.exporter.flush(timeout=2.0)`，不要重新 open DB。
-
-不要让多台机器、网络文件系统或跨主机容器共享同一个 embedded data dir；这些场景用 Fuju Trace server 或外部队列。
-
-如果希望 worker 完全不加载 native DB、需要落盘削峰，或者不想让请求路径等待 DB 锁，可以改用 spool：
-
-```python
-from fuju_trace import SpoolConsumer, SpoolDbExporter, Tracer, connect
-
-# worker 进程：只写 spool 文件，不打开 FujuTraceDB。
-tr = Tracer(exporter=SpoolDbExporter("./data/fuju-trace-spool", tenant_id=1))
-with tr.trace("worker-task", tenant_id=1) as t:
-    with t.span("tool-call") as s:
-        s.log("ok")
-tr.close()
-
-# 单独的消费者进程：打开 embedded DB 消费 spool。
-db = connect(path="./data/fuju_trace", tenant_id=1)
-consumer = SpoolConsumer(db, "./data/fuju-trace-spool")
-consumer.consume_once()
-db.close()
-```
-
-也可以直接跑 CLI：
+## Tests
 
 ```bash
-fuju-trace consume-spool --data-dir ./data/fuju_trace --spool-dir ./data/fuju-trace-spool
+python tests/test_sdk.py
+python -m unittest discover -s tests
 ```
-
-脚本或测试里可用 `--once` 消费一轮后退出。
-
-`SpoolDbExporter` 是 at-least-once 语义：消费者写 DB 成功前文件会留在 `ready/` 或 `inflight/`，重启后可继续消费。重复消费由引擎按确定性 `event_id` 去重。
-
-## 关键保证：event_id 跨语言逐字节一致
-
-`event_id = FNV-1a(ext_span_id ++ seq(8字节小端) ++ [event_type_tag])`，与引擎 `fuju-trace-core::event`
-**完全一致**（同样的哈希、常数、字段顺序、UTF-8 编码，中文也对得上）。
-
-意义：同一条 span 事件无论重传几次、在 SDK 还是引擎算，event_id 都相同 → 引擎的去重、崩溃重放幂等
-全都对得上（同一 span 重传/崩溃恢复不会被算两遍，token/费用不翻倍）。
-
-基准值来自引擎：`cargo run -p fuju-trace-core --example print_event_id`；`tests/test_sdk.py` 据此断言一致。
-
-## 模块
-
-| 文件 | 作用 |
-|---|---|
-| `client.py` | `FujuTraceClient` / `connect()`，用同一入口连接远程 server 或本地 embedded DB |
-| `event.py` | `EventType` / `event_id`（与引擎一致的 FNV）/ `SpanEvent`（对应引擎 WalRecord） |
-| `tracer.py` | `Tracer` / `Trace` / `Span` 打点 API（上下文管理器） |
-| `exporter.py` | `ConsoleExporter`（调试）/ `CollectingExporter`（测试）/ `DbExporter`（同步写 embedded DB）/ `BufferedDbExporter`（后台单写线程）/ `SpoolDbExporter` + `SpoolConsumer`（多 worker 本地 spool）/ `NoopExporter`（fail-open）/ `BatchExporter`（攒批）/ `HttpExporter`（批量 POST + 失败缓冲） |
-| `service.py` | `init_fuju_trace` / `shutdown_fuju_trace` / `FujuTraceRuntime` 服务端生命周期 helper |
-| `cli.py` | `fuju-trace consume-spool` 本地 spool 消费者命令 |
-| `_snowflake.py` | 单调雪花 ID（trace/span id） |
-
-引擎侧 `cargo run -p fuju-trace-engine --example server` 起 HTTP 摄入服务即可接收；`curl localhost:7878/v1/traces` 查回。
-
-## 可靠上报语义
-
-- `HttpExporter` 失败时把整批退回缓冲队首，下次 `flush/close` 重试；`on_error(err, dropped)` 会暴露错误和超上限丢弃数。
-- `buffered_count()` / `sent_count()` / `dropped_count()` 可接监控。
-- 语义是 at-least-once：网络“已送达但响应丢失”会重发，同一事件由引擎按确定性 `event_id` 去重，token/成本不会翻倍。
-- `BufferedDbExporter` 用一个后台线程独占 `FujuTraceDB`，请求线程只入队。第一条事件开启 `flush_interval` 收集窗口，满 `max_batch`、根 Trace 结束、主动 `flush()` 或 `close()` 时提前写；`sent_count()` / `dropped_count()` / `write_error_count()` 可接监控。
-- `SpoolDbExporter` 把事件写入本地 `spool/ready` 文件；`SpoolConsumer` 是唯一 DB 写者，失败时文件留在 ready 供下次重试。
-- `BufferedDbExporter.flush()` 只等待调用前已经提交的事件，不会被调用后持续进入的新事件拖住；`close()` 会立即结束当前收集窗口。进程退出前调用 `tr.close()`。
-
-## 还没做
-
-- 采样；上下文跨进程传播(traceparent)；spool 消费者健康检查和指标。

@@ -1,8 +1,6 @@
 use std::fmt;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type Result<T> = std::result::Result<T, FujuTraceError>;
 
@@ -10,7 +8,6 @@ pub type Result<T> = std::result::Result<T, FujuTraceError>;
 pub enum FujuTraceError {
     Io(std::io::Error),
     InvalidUrl(String),
-    Http { status: u16, body: String },
 }
 
 impl fmt::Display for FujuTraceError {
@@ -18,12 +15,6 @@ impl fmt::Display for FujuTraceError {
         match self {
             FujuTraceError::Io(err) => write!(f, "{err}"),
             FujuTraceError::InvalidUrl(message) => write!(f, "{message}"),
-            FujuTraceError::Http { status, body } => {
-                write!(
-                    f,
-                    "Fuju Trace HTTP request failed: status={status} body={body}"
-                )
-            }
         }
     }
 }
@@ -239,158 +230,6 @@ impl<E: Exporter> Exporter for BatchExporter<E> {
     fn close(&mut self) -> Result<()> {
         self.flush()?;
         self.sink.close()
-    }
-}
-
-pub struct HttpExporter {
-    url: HttpUrl,
-    headers: Vec<(String, String)>,
-    max_batch: usize,
-    max_buffered: usize,
-    timeout: Duration,
-    buffer: Vec<SpanEvent>,
-    sent: usize,
-    dropped: usize,
-}
-
-impl HttpExporter {
-    pub fn new(url: impl AsRef<str>) -> Result<Self> {
-        Ok(Self {
-            url: HttpUrl::parse(url.as_ref())?,
-            headers: Vec::new(),
-            max_batch: 256,
-            max_buffered: 4096,
-            timeout: Duration::from_secs(5),
-            buffer: Vec::new(),
-            sent: 0,
-            dropped: 0,
-        })
-    }
-
-    pub fn with_token(mut self, token: impl Into<String>) -> Self {
-        self.headers.push((
-            "Authorization".to_string(),
-            format!("Bearer {}", token.into()),
-        ));
-        self
-    }
-
-    pub fn with_tenant_id(mut self, tenant_id: u64) -> Self {
-        self.headers
-            .push(("X-Tenant-Id".to_string(), tenant_id.to_string()));
-        self
-    }
-
-    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.push((key.into(), value.into()));
-        self
-    }
-
-    pub fn with_batch_size(mut self, max_batch: usize) -> Self {
-        self.max_batch = max_batch.max(1);
-        self
-    }
-
-    pub fn with_max_buffered(mut self, max_buffered: usize) -> Self {
-        self.max_buffered = max_buffered.max(1);
-        self
-    }
-
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
-    pub fn flush(&mut self) -> Result<()> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
-        let batch = std::mem::take(&mut self.buffer);
-        self.post_or_buffer(batch)
-    }
-
-    pub fn buffered_count(&self) -> usize {
-        self.buffer.len()
-    }
-
-    pub fn sent_count(&self) -> usize {
-        self.sent
-    }
-
-    pub fn dropped_count(&self) -> usize {
-        self.dropped
-    }
-
-    fn post_or_buffer(&mut self, events: Vec<SpanEvent>) -> Result<()> {
-        if events.is_empty() {
-            return Ok(());
-        }
-        match self.post(&events) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let mut retry = events;
-                retry.append(&mut self.buffer);
-                self.buffer = retry;
-                if self.buffer.len() > self.max_buffered {
-                    let dropped = self.buffer.len() - self.max_buffered;
-                    self.buffer.drain(0..dropped);
-                    self.dropped += dropped;
-                }
-                Err(err)
-            }
-        }
-    }
-
-    fn post(&mut self, events: &[SpanEvent]) -> Result<()> {
-        let body = events_to_json(events);
-        let mut stream = TcpStream::connect((self.url.host.as_str(), self.url.port))?;
-        stream.set_read_timeout(Some(self.timeout))?;
-        stream.set_write_timeout(Some(self.timeout))?;
-        let mut request = format!(
-            "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
-            self.url.path,
-            self.url.host,
-            body.len()
-        );
-        for (key, value) in &self.headers {
-            request.push_str(key);
-            request.push_str(": ");
-            request.push_str(value);
-            request.push_str("\r\n");
-        }
-        request.push_str("\r\n");
-        request.push_str(&body);
-        stream.write_all(request.as_bytes())?;
-        let mut response = String::new();
-        stream.read_to_string(&mut response)?;
-        let (status, response_body) = parse_http_response(&response)?;
-        if (200..300).contains(&status) {
-            self.sent += events.len();
-            Ok(())
-        } else {
-            Err(FujuTraceError::Http {
-                status,
-                body: response_body.to_string(),
-            })
-        }
-    }
-}
-
-impl Exporter for HttpExporter {
-    fn export(&mut self, event: SpanEvent) -> Result<()> {
-        self.buffer.push(event);
-        if self.buffer.len() >= self.max_batch {
-            self.flush()?;
-        }
-        Ok(())
-    }
-
-    fn export_batch(&mut self, events: Vec<SpanEvent>) -> Result<()> {
-        self.post_or_buffer(events)
-    }
-
-    fn close(&mut self) -> Result<()> {
-        self.flush()
     }
 }
 
@@ -974,55 +813,6 @@ impl Snowflake {
         let seq = self.counter.fetch_add(1, Ordering::Relaxed) & 0x0fff;
         (millis << 22) | (u64::from(self.node_id) << 12) | seq
     }
-}
-
-#[derive(Clone, Debug)]
-struct HttpUrl {
-    host: String,
-    port: u16,
-    path: String,
-}
-
-impl HttpUrl {
-    fn parse(url: &str) -> Result<Self> {
-        let rest = url.strip_prefix("http://").ok_or_else(|| {
-            FujuTraceError::InvalidUrl(
-                "Rust SDK HttpExporter currently supports http:// URLs only".to_string(),
-            )
-        })?;
-        let (authority, path) = match rest.split_once('/') {
-            Some((authority, path)) => (authority, format!("/{path}")),
-            None => (rest, "/".to_string()),
-        };
-        if authority.is_empty() {
-            return Err(FujuTraceError::InvalidUrl(
-                "HTTP URL must include a host".to_string(),
-            ));
-        }
-        let (host, port) = match authority.rsplit_once(':') {
-            Some((host, port)) if !host.is_empty() => {
-                let port = port.parse::<u16>().map_err(|_| {
-                    FujuTraceError::InvalidUrl(format!("invalid HTTP port in URL: {url}"))
-                })?;
-                (host.to_string(), port)
-            }
-            _ => (authority.to_string(), 80),
-        };
-        Ok(Self { host, port, path })
-    }
-}
-
-fn parse_http_response(response: &str) -> Result<(u16, &str)> {
-    let (head, body) = response.split_once("\r\n\r\n").unwrap_or((response, ""));
-    let status_line = head.lines().next().unwrap_or_default();
-    let mut parts = status_line.split_whitespace();
-    let _http = parts.next();
-    let status = parts
-        .next()
-        .ok_or_else(|| FujuTraceError::InvalidUrl("invalid HTTP response".to_string()))?
-        .parse::<u16>()
-        .map_err(|_| FujuTraceError::InvalidUrl("invalid HTTP status".to_string()))?;
-    Ok((status, body))
 }
 
 fn now_ns() -> i64 {

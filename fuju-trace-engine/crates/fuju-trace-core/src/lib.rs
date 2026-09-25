@@ -141,7 +141,7 @@ pub mod event {
     }
 
     /// 确定性 FNV-1a 64（跨进程/跨语言一致）。给需要"把任意字节稳定映成 u64"的地方复用，
-    /// 例如 OTLP 适配器把字符串会话 id 哈希成 u64 —— 避免再抄一份哈希常量。
+    /// 例如嵌入式适配器把字符串会话 id 哈希成 u64 —— 避免再抄一份哈希常量。
     pub fn fnv1a64(bytes: &[u8]) -> u64 {
         let mut h = Fnv64::new();
         h.write(bytes);
@@ -419,7 +419,7 @@ pub mod fold {
         pub external_parent_span_id: Option<String>,
         /// 外部 session id 原文。AgenticData 等系统使用 UUID 时不会只剩 hash。
         pub external_session_id: Option<String>,
-        /// span 技术名。SDK 的 `span(name)` 和 OTLP span name 落到这里，不再混进 logs。
+        /// span 技术名。SDK 的 `span(name)` 落到这里，不再混进 logs。
         pub span_name: Option<String>,
         /// 给前端用户看的名字。只负责展示，不参与身份、聚合或 event_id。
         pub display_name: Option<String>,

@@ -208,7 +208,7 @@ impl TraceAggregateRollupIndex {
         self.query_inner(query, filter, true)
     }
 
-    /// HTTP read models sort or aggregate themselves, so skip the preliminary full sort.
+    /// In-process read models sort or aggregate themselves, so skip the preliminary full sort.
     pub(crate) fn query_unordered(
         &mut self,
         query: &TraceQuery,

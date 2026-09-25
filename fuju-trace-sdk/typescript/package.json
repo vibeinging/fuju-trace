@@ -35,7 +35,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test test/test_sdk.ts",
+    "test": "node --import tsx test/test_sdk.ts",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {

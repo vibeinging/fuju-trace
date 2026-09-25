@@ -57,11 +57,6 @@ impl NativeFujuTraceDb {
         self.route("POST", "/v1/ingest", &events_json, tenant_id)
     }
 
-    #[napi(js_name = "ingestOtlpJson")]
-    pub fn ingest_otlp_json(&self, otlp_json: String, tenant_id: Option<String>) -> Result<String> {
-        self.route("POST", "/v1/traces", &otlp_json, tenant_id)
-    }
-
     #[napi(js_name = "searchJson")]
     pub fn search_json(&self, query_json: String, tenant_id: Option<String>) -> Result<String> {
         self.route("POST", "/v1/search", &query_json, tenant_id)

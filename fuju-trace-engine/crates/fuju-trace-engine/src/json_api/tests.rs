@@ -1,8 +1,8 @@
 use super::*;
 use crate::InMemorySegmentStore;
 
-fn server() -> HttpIngestServer {
-    HttpIngestServer::new(WriteCoordinator::new(Arc::new(
+fn api() -> EngineJsonApi {
+    EngineJsonApi::new(WriteCoordinator::new(Arc::new(
         InMemorySegmentStore::default(),
     )))
 }
@@ -14,7 +14,7 @@ const BATCH: &str = r#"[
 
 #[test]
 fn route_ingest_then_query() {
-    let s = server();
+    let s = api();
     let (status, body) = s.route("POST", "/v1/ingest", BATCH);
     assert_eq!(status, 200);
     assert!(body.contains("\"ingested\":2"));
@@ -43,7 +43,7 @@ fn trace_search_page_events() -> String {
     format!("[{events}]")
 }
 
-fn assert_trace_search_pages(s: &HttpIngestServer) {
+fn assert_trace_search_pages(s: &EngineJsonApi) {
     for sort in ["trace", "duration", "tokens", "status"] {
         let body = format!(r#"{{"sortBy":"{sort}","limit":500}}"#);
         let (status, full) = s.route("POST", "/v1/trace-search", &body);
@@ -72,7 +72,7 @@ fn assert_trace_search_pages(s: &HttpIngestServer) {
 
 #[test]
 fn trace_search_partial_pages_match_full_sort_for_every_order() {
-    let s = server();
+    let s = api();
     let (status, response) = s.route("POST", "/v1/ingest", &trace_search_page_events());
     assert_eq!(status, 200, "{response}");
     assert_trace_search_pages(&s);
@@ -89,7 +89,7 @@ fn trace_search_pages_match_full_sort_after_disk_reopen() {
             .as_nanos(),
     ));
     let coord = WriteCoordinator::open_durable(&dir).unwrap();
-    let s = HttpIngestServer::new(Arc::clone(&coord));
+    let s = EngineJsonApi::new(Arc::clone(&coord));
     let (status, response) = s.route("POST", "/v1/ingest", &trace_search_page_events());
     assert_eq!(status, 200, "{response}");
     coord.flush_memtable();
@@ -98,14 +98,14 @@ fn trace_search_pages_match_full_sort_after_disk_reopen() {
 
     let reopened = WriteCoordinator::open_durable(&dir).unwrap();
     reopened.recover();
-    let s = HttpIngestServer::new(reopened);
+    let s = EngineJsonApi::new(reopened);
     assert_trace_search_pages(&s);
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn structured_cache_usage_round_trips_and_aggregates_without_double_counting() {
-    let s = server();
+    let s = api();
     let events = r#"[
       {"trace_id":702,"span_id":1,"session_id":9002,"ts":1,"seq":1,"event_type":1,"ext_span_id":"702-1","span_name":"llm:chat","model":"qwen"},
       {"trace_id":702,"span_id":1,"session_id":9002,"ts":2,"seq":2,"event_type":2,"ext_span_id":"702-1","input_tokens":100,"output_tokens":20,"cacheReadTokens":0,"cacheWriteTokens":30,"attrs":{"llm.call_site":"superagent.reasoning"}}
@@ -144,7 +144,7 @@ fn structured_cache_usage_round_trips_and_aggregates_without_double_counting() {
 
 #[test]
 fn start_only_span_is_running_until_end_arrives() {
-    let s = server();
+    let s = api();
     let start = r#"[{
       "trace_id":701,"span_id":1,"session_id":9001,"ts":100,"seq":1,
       "event_type":1,"ext_span_id":"701-1","span_name":"长时任务"
@@ -178,7 +178,7 @@ fn start_only_span_is_running_until_end_arrives() {
 
 #[test]
 fn names_are_exposed_without_changing_search_or_actor_identity() {
-    let s = server();
+    let s = api();
     let batch = r#"[
       {"trace_id":501,"span_id":1,"ts":1,"seq":1,"event_type":1,"ext_span_id":"501-1","span_name":"内部检索名甲","display_name":"  用户看到的根节点乙  ","agent_name":"risk-agent"},
       {"trace_id":501,"span_id":2,"parent_span_id":1,"ts":2,"seq":1,"event_type":1,"ext_span_id":"501-2","span_name":"内部工具检索名丙","display_name":"用户看到的工具丁","agent_name":"risk-agent","tool_name":"customer_lookup"},
@@ -259,7 +259,7 @@ fn names_are_exposed_without_changing_search_or_actor_identity() {
 
 #[test]
 fn route_ingest_accepts_external_ids_and_attrs() {
-    let s = server();
+    let s = api();
     let batch = r#"[
     {
       "trace_id":"run-uuid",
@@ -370,67 +370,10 @@ fn route_ingest_accepts_external_ids_and_attrs() {
 }
 
 #[test]
-fn route_metrics_reports_prometheus_format() {
-    // §3.1：/v1/metrics 输出 Prometheus 文本格式，含关键运行态指标。
-    let s = server();
-    // 灌点数据，让 memtable_rows > 0、committed_tail 推进。
-    s.route("POST", "/v1/ingest", BATCH);
-    let (status, body) = s.route("GET", "/v1/metrics", "");
-    assert_eq!(status, 200);
-    // Prometheus 格式特征：有 # HELP / # TYPE 注释、metric 行。
-    assert!(body.contains("# HELP "), "应有 HELP 注释:\n{body}");
-    assert!(body.contains("# TYPE "), "应有 TYPE 注释:\n{body}");
-    // 关键指标都在。
-    assert!(
-        body.contains("fuju_trace_manifest_version"),
-        "缺 manifest 版本:\n{body}"
-    );
-    assert!(
-        body.contains("fuju_trace_memtable_rows"),
-        "缺内存表行数:\n{body}"
-    );
-    assert!(
-        body.contains("fuju_trace_wal_committed_tail"),
-        "缺 WAL 尾:\n{body}"
-    );
-    assert!(
-        body.contains("fuju_trace_segments_live"),
-        "缺活跃段数:\n{body}"
-    );
-    assert!(
-        body.contains("fuju_trace_readers_active"),
-        "缺活跃读者:\n{body}"
-    );
-    assert!(
-        body.contains("fuju_trace_read_model_rollup_ready")
-            && body.contains("fuju_trace_read_model_filter_ready")
-            && body.contains("fuju_trace_read_model_search_ready"),
-        "缺惰性读模型就绪指标:\n{body}"
-    );
-    assert!(
-        body.contains("fuju_trace_filter_attr_disabled_postings"),
-        "缺过滤 postings 预算指标:\n{body}"
-    );
-    // 灌过数据 → committed_tail > 0。
-    assert!(
-        body.lines()
-            .any(|l| l.starts_with("fuju_trace_wal_committed_tail ") && !l.ends_with(" 0")),
-        "灌数据后 committed_tail 应 > 0:\n{body}"
-    );
-}
-
-#[test]
-fn route_health_and_ready_are_ok() {
-    let s = server();
-    assert_eq!(s.route("GET", "/v1/healthz", "").1, r#"{"ok":true}"#);
-    assert_eq!(s.route("GET", "/v1/readyz", "").1, r#"{"ok":true}"#);
-}
-
-#[test]
-fn http_tenant_header_isolates_traces_and_search() {
-    // HTTP 端到端租户隔离：摄入时 tenant 来自 X-Tenant-Id，body tenant_id 被覆盖；
-    // GET /v1/traces 与 POST /v1/search 带 X-Tenant-Id 头 → 只见本租户。
-    let s = server();
+fn tenant_context_isolates_traces_and_search() {
+    // 进程内租户隔离：调用上下文的 tenant 覆盖 body tenant_id；
+    // 列表和检索只返回调用上下文指定的租户。
+    let s = api();
     let batch1 = r#"[
       {"trace_id":1,"span_id":1,"ts":100,"seq":1,"event_type":2,"ext_span_id":"1-1","tenant_id":999,"duration_ns":10,"logs":["盗刷"]}
     ]"#;
@@ -453,7 +396,7 @@ fn http_tenant_header_isolates_traces_and_search() {
     let t1 = s.route_with_tenant("GET", "/v1/traces", "", Some(1)).1;
     assert!(
         t1.contains("\"trace_id\":1") && !t1.contains("\"trace_id\":2"),
-        "列表按租户头隔离: {t1}"
+        "列表按租户上下文隔离: {t1}"
     );
     // 检索同样隔离：查"盗刷"租户 1 只回 trace 1。
     let r1 = s
@@ -461,7 +404,7 @@ fn http_tenant_header_isolates_traces_and_search() {
         .1;
     assert!(
         r1.contains("\"trace_id\":1") && !r1.contains("\"trace_id\":2"),
-        "检索按租户头隔离: {r1}"
+        "检索按租户上下文隔离: {r1}"
     );
     let spoofed = s.route_with_tenant("GET", "/v1/traces", "", Some(999)).1;
     assert!(
@@ -470,68 +413,7 @@ fn http_tenant_header_isolates_traces_and_search() {
     );
 }
 
-#[test]
-fn route_otlp_ingest_then_query() {
-    // 生态入口:OTLP/HTTP JSON POST 到标准 /v1/traces → 摄入 → GET 查回。
-    let s = server();
-    let otlp = r#"{"resourceSpans":[{"scopeSpans":[{"spans":[{
-        "traceId":"00000000000000000000000000000063","spanId":"0000000000000001",
-        "name":"chat","startTimeUnixNano":"100","endTimeUnixNano":"150",
-        "status":{"code":1},
-        "attributes":[{"key":"gen_ai.usage.input_tokens","value":{"intValue":"900"}}]
-    }]}]}]}"#;
-    let (status, body) = s.route("POST", "/v1/traces", otlp);
-    assert_eq!(status, 200, "{body}");
-    assert!(body.contains("partialSuccess"));
-
-    let (status, body) = s.route("GET", "/v1/traces", "");
-    assert_eq!(status, 200);
-    assert!(
-        body.contains("\"trace_id\":99"),
-        "traceId 0x63=99 低位 {body}"
-    );
-    assert!(body.contains("\"total_input_tokens\":900"));
-}
-
-#[test]
-fn route_otlp_tenant_header_overrides_body_tenant_attr() {
-    // OTLP body 里的 fuju.trace.tenant_id 只是普通输入属性；HTTP 安全边界仍是 X-Tenant-Id。
-    let s = server();
-    let otlp = r#"{"resourceSpans":[{"scopeSpans":[{"spans":[{
-        "traceId":"00000000000000000000000000000064","spanId":"0000000000000001",
-        "name":"chat","startTimeUnixNano":"100","endTimeUnixNano":"150",
-        "attributes":[
-          {"key":"fuju.trace.tenant_id","value":{"stringValue":"999"}},
-          {"key":"fuju.trace.session_id","value":{"stringValue":"777"}},
-          {"key":"input.value","value":{"stringValue":"租户隔离测试"}}
-        ]
-    }]}]}]}"#;
-    assert_eq!(
-        s.route_with_tenant("POST", "/v1/traces", otlp, Some(1)).0,
-        200
-    );
-
-    let t1 = s.route_with_tenant("GET", "/v1/traces", "", Some(1)).1;
-    assert!(
-        t1.contains("\"trace_id\":100"),
-        "租户头 1 应能看到 trace: {t1}"
-    );
-    let spoofed = s.route_with_tenant("GET", "/v1/traces", "", Some(999)).1;
-    assert!(
-        !spoofed.contains("\"trace_id\":100"),
-        "body tenant_id 不能越权: {spoofed}"
-    );
-
-    let sessions = s
-        .route_with_tenant("GET", "/v1/sessions?cursor=0&limit=50", "", Some(1))
-        .1;
-    assert!(
-        sessions.contains("\"sessionId\":\"777\""),
-        "fuju.trace.session_id 应进入控制台会话: {sessions}"
-    );
-}
-
-// 两条带 agent 的中文 span(走 wire 摄入 → 自动喂 BM25 + 属性边车)。
+// 两条带 agent 的中文 span，用于验证检索和过滤。
 const SEARCH_BATCH: &str = r#"[
   {"trace_id":1,"span_id":10,"ts":1,"seq":1,"event_type":2,"ext_span_id":"1-10","status":1,"duration_ns":100,"agent_name":"风控","logs":["疑似盗刷 已拦截"]},
   {"trace_id":2,"span_id":20,"ts":1,"seq":1,"event_type":2,"ext_span_id":"2-20","status":0,"duration_ns":50,"agent_name":"人工","logs":["盗刷误报 复核通过"]}
@@ -540,7 +422,7 @@ const SEARCH_BATCH: &str = r#"[
 #[test]
 fn route_search_text_and_filter() {
     // 检索端点:灌数据 → POST /v1/search 中文搜 → 带 agent 过滤再搜。
-    let s = server();
+    let s = api();
     assert_eq!(s.route("POST", "/v1/ingest", SEARCH_BATCH).0, 200);
 
     // 纯文本搜"盗刷":两条都命中。
@@ -573,7 +455,7 @@ fn route_search_text_and_filter() {
 fn route_search_vector_and_hybrid() {
     // 检索端点的向量 / 混合路:body 带 vector 走找相似,text+vector 走混合。
     let coord = WriteCoordinator::new(Arc::new(InMemorySegmentStore::default()));
-    let s = HttpIngestServer::new(Arc::clone(&coord));
+    let s = EngineJsonApi::new(Arc::clone(&coord));
     assert_eq!(s.route("POST", "/v1/ingest", SEARCH_BATCH).0, 200);
     coord.index_embedding(1, 10, vec![0.0, 0.0]); // 风控/盗刷,离 query 近
     coord.index_embedding(2, 20, vec![5.0, 5.0]); // 人工,远
@@ -614,7 +496,7 @@ fn route_search_vector_and_hybrid() {
 #[test]
 fn route_console_sessions_turns_trace_detail() {
     // 控制台数据端点端到端：灌 1 个会话(2 轮) → 会话分页 → 轮次 → trace span → span 详情。
-    let s = server();
+    let s = api();
     let batch = r#"[
       {"trace_id":11,"span_id":1,"ts":1,"seq":1,"event_type":1,"ext_span_id":"11-1","session_id":900,"agent_name":"风控研判","input_tokens":500,"input_text":"对账户A做研判","attrs":{"project_id":"agentic-data","skill":"review","mode":"auto"}},
       {"trace_id":11,"span_id":1,"ts":2,"seq":2,"event_type":4,"ext_span_id":"11-1","session_id":900,"logs":["读取 package.json"],"attrs":{"call_site":"package-json"}},
@@ -701,7 +583,7 @@ fn route_console_sessions_turns_trace_detail() {
 #[test]
 fn route_console_endpoints_are_tenant_isolated() {
     // 控制台详情端点也必须按 X-Tenant-Id 隔离，尤其是 input/output 大文本。
-    let s = server();
+    let s = api();
     let t1 = r#"[
       {"trace_id":11,"span_id":1,"ts":1,"seq":1,"event_type":1,"ext_span_id":"11-1","session_id":900,"tenant_id":999,"agent_name":"租户一","input_text":"租户一问题"},
       {"trace_id":11,"span_id":1,"ts":2,"seq":2,"event_type":2,"ext_span_id":"11-1","session_id":900,"tenant_id":999,"status":0,"duration_ns":1000000,"output_text":"租户一答案"}
@@ -762,151 +644,8 @@ fn route_console_endpoints_are_tenant_isolated() {
 }
 
 #[test]
-fn route_otlp_rejects_bad_body() {
-    let s = server();
-    assert_eq!(s.route("POST", "/v1/traces", "garbage").0, 400);
-    assert_eq!(
-        s.route("POST", "/v1/traces", r#"{"foo":1}"#).0,
-        400,
-        "缺 resourceSpans → 400"
-    );
-}
-
-#[test]
 fn route_rejects_bad_json_and_unknown() {
-    let s = server();
+    let s = api();
     assert_eq!(s.route("POST", "/v1/ingest", "garbage").0, 400);
     assert_eq!(s.route("GET", "/nope", "").0, 404);
-}
-
-#[test]
-fn auth_token_logic() {
-    let s = server().with_auth_token("secret");
-    assert!(!s.authorized(None), "无 token 拒绝");
-    assert!(!s.authorized(Some("Bearer wrong")), "错 token 拒绝");
-    assert!(s.authorized(Some("Bearer secret")), "对 token 放行");
-    assert!(server().authorized(None), "未配置 token → 放行（开发）");
-}
-
-#[test]
-fn oversized_body_rejected_without_oom() {
-    // 声称 1TB body 但不发 —— 服务端必须 413,绝不去 vec![0u8; 1e12] 把自己撑死。
-    let s = Arc::new(server().with_max_body(1024));
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let h = std::thread::spawn(move || s.serve_n(&listener, 1));
-    let mut c = TcpStream::connect(addr).unwrap();
-    c.write_all(b"POST /v1/ingest HTTP/1.1\r\nHost: x\r\nContent-Length: 999999999999\r\nConnection: close\r\n\r\n")
-        .unwrap();
-    let mut resp = String::new();
-    c.read_to_string(&mut resp).unwrap();
-    assert!(resp.contains("413"), "{resp}");
-    h.join().unwrap();
-}
-
-#[test]
-fn auth_enforced_over_socket() {
-    let s = Arc::new(server().with_auth_token("secret"));
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let h = std::thread::spawn(move || s.serve_n(&listener, 2));
-    // 无 token → 401
-    let mut c = TcpStream::connect(addr).unwrap();
-    c.write_all(b"GET /v1/traces HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
-        .unwrap();
-    let mut r = String::new();
-    c.read_to_string(&mut r).unwrap();
-    assert!(r.contains("401"), "{r}");
-    // 带对 token → 200
-    let mut c2 = TcpStream::connect(addr).unwrap();
-    c2.write_all(b"GET /v1/traces HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer secret\r\nConnection: close\r\n\r\n")
-        .unwrap();
-    let mut r2 = String::new();
-    c2.read_to_string(&mut r2).unwrap();
-    assert!(r2.contains("200 OK"), "{r2}");
-    h.join().unwrap();
-}
-
-#[cfg(feature = "gzip")]
-#[test]
-fn gzip_body_decompressed() {
-    let s = Arc::new(server());
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let h = std::thread::spawn(move || s.serve_n(&listener, 1));
-
-    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    enc.write_all(BATCH.as_bytes()).unwrap();
-    let gz = enc.finish().unwrap();
-    assert!(gz.len() < BATCH.len(), "确实压缩了");
-
-    let mut c = TcpStream::connect(addr).unwrap();
-    let header = format!(
-        "POST /v1/ingest HTTP/1.1\r\nHost: x\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        gz.len()
-    );
-    c.write_all(header.as_bytes()).unwrap();
-    c.write_all(&gz).unwrap();
-    let mut resp = String::new();
-    c.read_to_string(&mut resp).unwrap();
-    assert!(resp.contains("\"ingested\":2"), "{resp}");
-    h.join().unwrap();
-}
-
-#[test]
-fn thread_pool_handles_concurrent_requests() {
-    // 线程池：并发打 8 个请求,都成功(不串、不崩)。
-    let s = Arc::new(server());
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let me = Arc::clone(&s);
-    std::thread::spawn(move || me.serve_pool(listener, 4));
-    let mut handles = Vec::new();
-    for _ in 0..8 {
-        handles.push(std::thread::spawn(move || {
-            let mut c = TcpStream::connect(addr).unwrap();
-            c.write_all(b"GET /v1/traces HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
-                .unwrap();
-            let mut r = String::new();
-            c.read_to_string(&mut r).unwrap();
-            assert!(r.contains("200 OK"), "{r}");
-        }));
-    }
-    for h in handles {
-        h.join().unwrap();
-    }
-}
-
-#[test]
-fn real_socket_roundtrip() {
-    // 真 socket：起服务线程,客户端 POST 再 GET,验证字节真从一个连接搬到另一个。
-    let s = server();
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let handle = std::thread::spawn(move || s.serve_n(&listener, 2));
-
-    // POST
-    let mut c = TcpStream::connect(addr).unwrap();
-    let req = format!(
-        "POST /v1/ingest HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        BATCH.len(),
-        BATCH
-    );
-    c.write_all(req.as_bytes()).unwrap();
-    let mut resp = String::new();
-    c.read_to_string(&mut resp).unwrap();
-    assert!(
-        resp.contains("200 OK") && resp.contains("\"ingested\":2"),
-        "{resp}"
-    );
-
-    // GET
-    let mut c2 = TcpStream::connect(addr).unwrap();
-    c2.write_all(b"GET /v1/traces HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
-        .unwrap();
-    let mut resp2 = String::new();
-    c2.read_to_string(&mut resp2).unwrap();
-    assert!(resp2.contains("\"trace_id\":7"), "{resp2}");
-
-    handle.join().unwrap();
 }

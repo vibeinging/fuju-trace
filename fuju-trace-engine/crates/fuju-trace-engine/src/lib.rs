@@ -27,9 +27,6 @@ use fuju_trace_wal::{Wal, WalRecord};
 mod wire;
 pub use wire::parse_wire_batch;
 
-mod otlp;
-pub use otlp::parse_otlp_traces;
-
 mod graph;
 pub use graph::GraphAnnIndex;
 
@@ -76,13 +73,8 @@ use trace_rollup::TraceAggregateRollupIndex;
 mod vecindex_disk;
 pub use vecindex_disk::{DiskGraphConfig, DiskGraphIndex, DiskGraphStore, DurableGraphIndex};
 
-mod http;
-pub use http::{EngineJsonApi, HttpIngestServer};
-
-/// 编译期嵌入的控制台静态资源（build.rs 生成；console_dist/ 不存在则为空表）。
-pub mod assets {
-    include!(concat!(env!("OUT_DIR"), "/assets.rs"));
-}
+mod json_api;
+pub use json_api::EngineJsonApi;
 
 pub mod evalkit;
 

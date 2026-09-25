@@ -40,12 +40,6 @@ classifiers = [
 ]
 dependencies = []
 
-[project.optional-dependencies]
-server = ["fastapi>=0.100", "uvicorn>=0.23"]
-
-[project.scripts]
-fuju-trace-db = "fuju_trace_db.cli:main"
-
 [project.urls]
 Homepage = "https://github.com/vibeinging/fuju-trace"
 Repository = "https://github.com/vibeinging/fuju-trace"

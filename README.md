@@ -1,144 +1,76 @@
 # Fuju Trace
 
-**Searchable run replay for AI agents.** Fuju Trace turns an agent run into a connected record of model calls, tool calls, outputs, errors, and token use. Add a tracing SDK to replay what happened and find related runs; add embedded storage only when your app needs local queries.
+Fuju Trace is an AI Agent tracing SDK with an embeddable Trace data layer. An application creates traces and spans in-process, then writes events directly to VexDB or the local TraceDB. Reads use the same database adapter. No separate Trace service is needed.
 
-[中文](README.zh-CN.md) · English · [MIT license](LICENSE)
+[中文说明](README.zh-CN.md) · [VexDB setup](fuju-trace-vexdb/README.md)
 
-> **Repository status:** Fuju Trace now has its own public source repository. The renamed Python and npm packages are configured but have not been published. The source quick start below works without a package registry. See [Current State](docs/CURRENT_STATE.md) for verified capabilities and release status.
-
-![Fuju Trace replay console](docs/images/console-overview.png)
-
-## Why Fuju Trace
-
-A log records an event. To diagnose an agent run, you also need to know which steps belonged to that run, how they called one another, and where the result changed. Fuju Trace keeps that structure as traces and spans; each span can still contain logs.
-
-- **Explain a result or failure:** Replay a session and follow nested model and tool calls, their inputs and outputs, errors, timing, and token use.
-- **Find patterns across runs:** Search Chinese text with BM25, use filtered vector or hybrid search, and narrow results by tenant, agent, status, time, or supported attributes. Mark useful runs with annotations and dataset associations for later eval work.
-- **Start small, then choose where data lives:** Instrument Python, TypeScript, or Rust, or send OTLP/HTTP JSON. Query a local HTTP service or embed the same Rust engine in Python, Node/Electron, or Rust.
-- **Handle retries and restarts:** Deterministic event IDs let the engine recognize repeated events. The durable engine uses a WAL, snapshots, and recovery; its core has no third-party Rust dependencies.
-
-Fuju Trace stores execution evidence. Prompt optimization and independent acceptance live in the separate `fuju-rsi` project.
-
-## Try it from source
-
-Run these commands from the repository root. You need Rust 1.80+ and Python 3.8+. The demo server includes sample traces and keeps data **in memory**; use an embedded DB or the Python DB server for durable storage.
-
-**Terminal 1 — start the demo server:**
+## VexDB quick start
 
 ```bash
-cargo run --offline --manifest-path fuju-trace-engine/Cargo.toml \
-  -p fuju-trace-engine --example server
+pip install 'fuju-trace[vexdb]==0.1.9'
 ```
 
-**Terminal 2 — send a trace with the Python SDK, then search for it:**
+```python
+import os
+from fuju_trace import DbExporter, Tracer, connect
+
+with connect(vexdb_dsn=os.environ["VEXDB_DSN"], tenant_id=1,
+             vector_dim=3, initialize=True) as db:
+    tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
+    with tracer.trace("risk review", tenant_id=1) as trace:
+        with trace.span("investigate") as span:
+            span.log("suspicious transaction")
+    tracer.close()
+    print(db.search(text="transaction", k=10))
+```
+
+Set `vector_dim` to your embedding model's dimension. Text search works without embeddings. Supply vectors through `db.set_embedding(...)` if you need vector or hybrid search. `initialize=True` creates the tables and indexes on first use. Pass either `vexdb_dsn` or `vexdb_params`; keep credentials outside the repository. The adapter uses the standard `psycopg2` protocol and can reuse an existing compatible `psycopg2-binary` installation.
+
+Use `BufferedDbExporter` for batched writes, with an explicit `flush()` when reads must see the data. Use `DbExporter` when each write must complete synchronously. Sessions in one process may share a VexDB store. Assign distinct `node_id` values across processes or hosts.
+
+## Local embedded TraceDB
+
+From a source checkout, build the native Python binding:
 
 ```bash
-PYTHONPATH=fuju-trace-sdk/python python3 - <<'PY'
-from fuju_trace import HttpExporter, Tracer
-
-tracer = Tracer(
-    exporter=HttpExporter("http://127.0.0.1:7878/v1/ingest", tenant_id=1),
-    node_id=1,
-)
-with tracer.trace("风控复核", tenant_id=1) as trace:
-    with trace.span("查询交易") as span:
-        span.log("疑似盗刷")
-tracer.close()
-PY
-
-curl -fsS http://127.0.0.1:7878/v1/search \
-  -H 'Content-Type: application/json' \
-  -H 'X-Tenant-Id: 1' \
-  -d '{"text":"盗刷","k":10}'
+python -m pip install -e ./fuju-trace-sdk/python -e ./fuju-trace-db-python
 ```
-
-`tracer.close()` flushes buffered events. Use the same `X-Tenant-Id` on writes and reads. The full wire format, search filters, authentication, and OTLP endpoint are in the [API reference](docs/API_REFERENCE.md).
-
-### Open the replay console
-
-A fresh source checkout must build the frontend before the Rust binary can embed it. Run this from the repository root, **then restart** the demo server:
-
-```bash
-npm --prefix fuju-trace-console ci
-VITE_API=http npm --prefix fuju-trace-console run build
-python3 scripts/sync_console.py
-```
-
-Open [http://127.0.0.1:7878/](http://127.0.0.1:7878/). The console uses the same `/v1/*` API as other clients.
-
-## Choose an integration
-
-The names below are the **planned package names**, not currently published install targets. Use the linked source packages for local development.
-
-| Your app | Package / source | Use it for |
-|---|---|---|
-| Python sends traces to a server | `fuju-trace` · [Python SDK](fuju-trace-sdk/python/README.md) | Lightweight, standard-library tracing |
-| TypeScript sends traces to a server | `@fuju/trace-sdk` · [TypeScript SDK](fuju-trace-sdk/typescript/README.md) | Browser/Node tracing |
-| Rust sends traces to a server | [Rust SDK](fuju-trace-sdk/rust/README.md) | Standard-library tracing |
-| Python writes and queries locally | `fuju-trace` + `fuju-trace-db` · [Python DB](fuju-trace-db-python/README.md) | Embedded DB, optional FastAPI server |
-| Node or Electron writes and queries locally | `@fuju/trace-db` · [Node DB](fuju-trace-node/README.md) | Embedded Rust engine through Node-API |
-| Rust writes and queries locally | [Rust DB](fuju-trace-db-rs/README.md) | Embedded engine wrapper |
-| Existing OpenTelemetry/OpenInference app | `POST /v1/traces` · [API reference](docs/API_REFERENCE.md) | OTLP/HTTP JSON ingestion |
-
-For example, install the Python source packages from the repository root to use embedded storage:
-
-```bash
-python3 -m pip install ./fuju-trace-sdk/python ./fuju-trace-db-python
-```
-
-`fuju-trace-db` builds a native Rust extension. Once installed, open one DB handle per process and reuse it:
 
 ```python
 from fuju_trace import DbExporter, Tracer, connect
 
-with connect(path="./fuju-trace-data", tenant_id=1) as db:
+with connect(path="./trace-data", tenant_id=1) as db:
     tracer = Tracer(exporter=DbExporter(db, tenant_id=1), node_id=1)
-    with tracer.trace("风控复核", tenant_id=1) as trace:
-        with trace.span("查询交易") as span:
-            span.log("疑似盗刷")
+    with tracer.trace("request", tenant_id=1) as trace:
+        with trace.span("tool call") as span:
+            span.log("done")
     tracer.close()
-    print(db.search(text="盗刷", k=10))
+    print(db.search(text="done", k=10))
 ```
 
-For FastAPI, ARQ, or Celery, initialize once when each process starts and close once when it exits; see the [Python DB guide](fuju-trace-db-python/README.md). For Node/Electron local tarballs, build the native package and run `npm run pack:verify` in [`fuju-trace-node/`](fuju-trace-node/README.md).
+The Rust engine provides WAL recovery, span folding, Chinese BM25, a vector index, and filtered search. Processes on the same host may share a local data directory; sharing it between hosts is unsupported. Node/Electron bindings live in `@fuju/trace-db`, and the Rust binding is `fuju-trace-db`.
 
-**Deployment boundary:** Embedded mode supports processes sharing one **local** data directory on the same machine. For multiple machines or hosts, run one service and connect over HTTP. Do not share an embedded data directory over a network filesystem.
+## Technical properties
 
-## How it works
+- Deterministic `event_id = hash(ext_span_id, seq, event_type)` matches the Python, TypeScript, and Rust SDKs and the engine byte-for-byte. Repeated events are counted once.
+- Start, log, and end events fold into spans. The local DB recovers from its WAL and immutable segments.
+- Text, vector, and hybrid search support tenant, trace, time, agent, status, and attribute filters. VexDB uses native BM25 and vector indexes; the local engine has its own indexes.
+- Exporter and database adapters keep instrumentation separate from storage. The base Python SDK has no database runtime dependency; install the `db` or `vexdb` extra for the chosen backend.
 
-SDK and OTLP events enter through HTTP or the in-process `EngineJsonApi`. The engine writes them to a WAL and segments, then folds start, log, and end events into complete spans when reading. Search, replay, and the console read the same underlying traces. Event IDs are deterministic:
+## Repository
 
-```text
-event_id = hash(ext_span_id, seq, event_type)
-```
+- `fuju-trace-sdk/`: Python, TypeScript, and Rust instrumentation SDKs.
+- `fuju-trace-vexdb/`: VexDB event store, folded span model, and search adapter.
+- `fuju-trace-engine/`: local Rust TraceDB engine.
+- `fuju-trace-db-python/`, `fuju-trace-node/`, `fuju-trace-db-rs/`: in-process database bindings.
+- `docs/CURRENT_STATE.md`: implementation status and limits.
 
-This lets retries and WAL replay recognize the same event. For retrieval, the default engine combines Chinese word tokenization and BM25 with an on-disk graph vector index; hybrid search fuses the two result sets with RRF. The caller supplies embeddings when vector search is needed—the engine does not call an embedding model.
-
-The core Rust engine uses only the standard library. Native language bindings and optional storage adapters live outside its workspace. See [Current State](docs/CURRENT_STATE.md) for tested behavior and remaining production limits.
-
-## Develop and verify
-
-Run from the repository root:
+## Verify
 
 ```bash
 cargo test --offline --manifest-path fuju-trace-engine/Cargo.toml
-PYTHONPATH=fuju-trace-sdk/python python3 fuju-trace-sdk/python/tests/test_sdk.py
-python3 scripts/check_release_versions.py
+./scripts/package_mode_eval.sh
+./tests/crash_recovery_kill9.sh 3
 ```
 
-Package-level build, clean-consumer checks, upgrade tests, and release steps are documented in [AGENTS.md](AGENTS.md). Publishing this source repository does not publish the Python and npm packages.
-
-## Project map
-
-- [`fuju-trace-engine/`](fuju-trace-engine/) — Rust engine and HTTP examples
-- [`fuju-trace-sdk/`](fuju-trace-sdk/) — Python, TypeScript, and Rust SDKs
-- [`fuju-trace-console/`](fuju-trace-console/) — replay UI
-- [`fuju-trace-db-python/`](fuju-trace-db-python/), [`fuju-trace-node/`](fuju-trace-node/), [`fuju-trace-db-rs/`](fuju-trace-db-rs/) — embedded DB packages
-- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) — HTTP and embedded JSON contract
-- [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — current implementation and limits
-
-`fuju-rsi` is a separate project. Its optional telemetry plugin uses Fuju Trace when available and writes local telemetry logs when it is not; Fuju Trace has no runtime dependency on RSI.
-
-## License
-
-[MIT](LICENSE)
+MIT licensed. This is an alpha release; validate query plans, recall, and write latency with your own workload before production use.

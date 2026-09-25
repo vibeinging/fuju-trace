@@ -3,7 +3,6 @@
 export declare class NativeFujuTraceDB {
   constructor(dataDir: string)
   ingestJson(eventsJson: string, tenantId?: string | undefined | null): string
-  ingestOtlpJson(otlpJson: string, tenantId?: string | undefined | null): string
   searchJson(queryJson: string, tenantId?: string | undefined | null): string
   indexEmbedding(traceId: string, spanId: string, embedding: Array<number>): void
   indexEmbeddings(traceIds: Array<string>, spanIds: Array<string>, embeddings: Array<Array<number>>): void

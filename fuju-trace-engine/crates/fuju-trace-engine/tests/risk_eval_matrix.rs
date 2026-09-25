@@ -1,15 +1,13 @@
 //! 主线风险矩阵 eval。
 //!
 //! 这里放最容易被迁移误伤的单机能力：租户隔离、错误请求不落脏数据、
-//! attrs 过滤、trace/span 详情、持久化恢复和基础 HTTP 安全边界。
+//! attrs 过滤、trace/span 详情、持久化恢复和进程内租户边界。
 
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use fuju_trace_engine::{EngineJsonApi, HttpIngestServer, InMemorySegmentStore, WriteCoordinator};
+use fuju_trace_engine::{EngineJsonApi, InMemorySegmentStore, WriteCoordinator};
 
 fn fresh_api() -> (Arc<WriteCoordinator>, EngineJsonApi) {
     let coord = WriteCoordinator::new(Arc::new(InMemorySegmentStore::default()));
@@ -33,79 +31,6 @@ fn assert_contains(body: &str, needle: &str) {
 
 fn assert_not_contains(body: &str, needle: &str) {
     assert!(!body.contains(needle), "unexpected {needle:?} in {body}");
-}
-
-fn socket_request(
-    addr: SocketAddr,
-    method: &str,
-    path: &str,
-    body: &str,
-    tenant: Option<u64>,
-    token: Option<&str>,
-) -> (u16, String) {
-    let mut stream = TcpStream::connect(addr).unwrap();
-    let mut req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nConnection: close\r\n",
-        body.len()
-    );
-    if let Some(tenant) = tenant {
-        req.push_str(&format!("X-Tenant-Id: {tenant}\r\n"));
-    }
-    if let Some(token) = token {
-        req.push_str(&format!("Authorization: Bearer {token}\r\n"));
-    }
-    req.push_str("\r\n");
-    stream.write_all(req.as_bytes()).unwrap();
-    stream.write_all(body.as_bytes()).unwrap();
-    let mut resp = String::new();
-    if let Err(e) = stream.read_to_string(&mut resp) {
-        if resp.is_empty() {
-            return (0, format!("read response failed: {e}"));
-        }
-    }
-    response_status_and_body(&resp)
-}
-
-fn socket_request_declared_length(
-    addr: SocketAddr,
-    method: &str,
-    path: &str,
-    declared_len: usize,
-    tenant: Option<u64>,
-    token: Option<&str>,
-) -> (u16, String) {
-    let mut stream = TcpStream::connect(addr).unwrap();
-    let mut req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {declared_len}\r\nConnection: close\r\n"
-    );
-    if let Some(tenant) = tenant {
-        req.push_str(&format!("X-Tenant-Id: {tenant}\r\n"));
-    }
-    if let Some(token) = token {
-        req.push_str(&format!("Authorization: Bearer {token}\r\n"));
-    }
-    req.push_str("\r\n");
-    stream.write_all(req.as_bytes()).unwrap();
-    let mut resp = String::new();
-    if let Err(e) = stream.read_to_string(&mut resp) {
-        if resp.is_empty() {
-            return (0, format!("read response failed: {e}"));
-        }
-    }
-    response_status_and_body(&resp)
-}
-
-fn response_status_and_body(resp: &str) -> (u16, String) {
-    let status = resp
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let body = resp
-        .split_once("\r\n\r\n")
-        .map(|(_, body)| body.to_string())
-        .unwrap_or_default();
-    (status, body)
 }
 
 #[test]
@@ -781,37 +706,6 @@ fn retention_plan_apply_audit_and_policy_are_durable() {
         assert_contains(&policies, r#""lastRunAtNs":"2""#);
     }
     let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn http_auth_body_limit_and_tenant_header_work_together() {
-    let coord = WriteCoordinator::new(Arc::new(InMemorySegmentStore::default()));
-    let server = HttpIngestServer::new(Arc::clone(&coord))
-        .with_auth_token("secret")
-        .with_max_body(256);
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let handle = std::thread::spawn(move || server.serve_n(&listener, 3));
-
-    let (status, body) = socket_request(addr, "GET", "/v1/traces", "", None, None);
-    assert_eq!(status, 401, "{body}");
-
-    let (status, body) =
-        socket_request_declared_length(addr, "POST", "/v1/ingest", 10_000, Some(1), Some("secret"));
-    assert_eq!(status, 413, "{body}");
-
-    let batch = r#"[{"trace_id":99001,"span_id":1,"session_id":9900,"tenant_id":2,"ts":10,"seq":1,"event_type":2,"ext_span_id":"99001-1","status":0,"duration_ns":10,"input_text":"http tenant"}]"#;
-    let (status, body) = socket_request(addr, "POST", "/v1/ingest", batch, Some(1), Some("secret"));
-    assert_eq!(status, 200, "{body}");
-    assert_contains(&body, r#""ingested":1"#);
-
-    handle.join().unwrap();
-
-    let api = EngineJsonApi::new(coord);
-    let (_, t1) = api.route_with_tenant("GET", "/v1/traces", "", Some(1));
-    assert_contains(&t1, r#""trace_id":99001"#);
-    let (_, t2) = api.route_with_tenant("GET", "/v1/traces", "", Some(2));
-    assert_not_contains(&t2, r#""trace_id":99001"#);
 }
 
 #[test]

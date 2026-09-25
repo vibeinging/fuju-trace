@@ -174,12 +174,6 @@ fi
 if want rust-db-source; then
   echo
   echo "==> Rust embedded DB source bundle"
-  # 干净检出不会带 console_dist；先构建并同步，避免发布没有回放页的引擎源码包。
-  pushd "$ROOT_DIR/fuju-trace-console" >/dev/null
-  run npm ci
-  run env VITE_API=http npm run build
-  popd >/dev/null
-  run python "$ROOT_DIR/scripts/sync_console.py"
   RUST_DB_VERSION="$(python -c 'import pathlib, sys, tomllib; print(tomllib.loads((pathlib.Path(sys.argv[1]) / "fuju-trace-db-rs/Cargo.toml").read_text())["package"]["version"])' "$ROOT_DIR")"
   mkdir -p "$OUT_DIR/rust-db"
   (

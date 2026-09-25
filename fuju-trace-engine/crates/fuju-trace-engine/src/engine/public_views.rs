@@ -273,7 +273,7 @@ pub struct ConsoleSession {
     pub first_trace_id: u64,
 }
 
-/// 控制台瀑布的一行 span（kind/name/起始时刻为派生值，见 `console_trace_spans`）。
+/// 详情视图的一行 span（kind/name/起始时刻为派生值，见 `console_trace_spans`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsoleSpan {
     pub span_id: u64,
@@ -285,7 +285,7 @@ pub struct ConsoleSpan {
     pub kind: &'static str,
     /// 兼容字段：当前角色/工具/模型名。新前端展示优先用 display_name/span_name。
     pub name: String,
-    /// SDK/OTLP 上报的具体操作名。
+    /// SDK 上报的具体操作名。
     pub span_name: Option<String>,
     /// 给最终用户看的可选名字。
     pub display_name: Option<String>,

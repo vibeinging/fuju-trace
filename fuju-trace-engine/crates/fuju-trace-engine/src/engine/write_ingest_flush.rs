@@ -191,7 +191,7 @@ impl WriteCoordinator {
     }
 
     /// 摄入 SDK 线格式记录：转成内部 WalRecord（引擎自算 event_id）后走正常 `ingest`。
-    /// 这是「打点 → 引擎存」的数据契约入口；上面再套一层 HTTP/OTLP 网关即闭环（网关是纯管道）。
+    /// 这是「打点 → 引擎存」的数据契约入口，嵌入式绑定直接调用。
     pub fn ingest_wire(&self, records: Vec<WireRecord>) -> WalLsn {
         self.try_ingest_wire(records)
             .expect("Fuju Trace WAL append or sync failed")
@@ -205,7 +205,7 @@ impl WriteCoordinator {
         self.try_ingest(recs)
     }
 
-    /// HTTP 网关专用摄入：租户来自鉴权上下文（如 `X-Tenant-Id`），覆盖 wire body 里的 tenant_id。
+    /// 嵌入式绑定专用摄入：租户来自调用上下文，覆盖 wire body 里的 tenant_id。
     /// 这是多租户安全边界；SDK/客户端可以重复发送 body，但不能自选或伪造租户。
     pub fn ingest_wire_for_tenant(
         &self,
@@ -225,25 +225,6 @@ impl WriteCoordinator {
             r.tenant_id = tenant;
         }
         self.try_ingest_wire(records)
-    }
-
-    /// 摄入 OTLP/OpenInference 标准 trace（OTLP/HTTP JSON）：经适配器映射成 WireRecord 后走正常摄入。
-    /// 这是「生态入口」——已用 OpenTelemetry / OpenInference 埋点的 agent 应用不改打点即可灌进来。
-    /// 解析失败返回 Err（调用方/HTTP 网关据此回 400）。
-    pub fn ingest_otlp(&self, body: &str) -> Result<WalLsn, String> {
-        let wires = parse_otlp_traces(body)?;
-        self.try_ingest_wire(wires).map_err(|error| error.to_string())
-    }
-
-    /// HTTP 网关专用 OTLP 摄入：OTLP attributes 里带的 tenant 也不作为安全边界，统一由请求上下文覆盖。
-    pub fn ingest_otlp_for_tenant(
-        &self,
-        body: &str,
-        tenant: Option<u64>,
-    ) -> Result<WalLsn, String> {
-        let wires = parse_otlp_traces(body)?;
-        self.try_ingest_wire_for_tenant(wires, tenant)
-            .map_err(|error| error.to_string())
     }
 
     /// 设置内存表自动刷盘阈值（行数）。
