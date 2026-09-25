@@ -36,6 +36,8 @@ jobs:
           npm ci --prefix fuju-trace-sdk/typescript
           npm ci --prefix fuju-trace-console
           npm ci --prefix fuju-trace-node --omit=optional
+      - name: Fetch locked optional Rust dependencies
+        run: cargo fetch --locked --manifest-path fuju-trace-engine/Cargo.toml
       - name: Test Rust engine
         run: cargo test --offline --manifest-path fuju-trace-engine/Cargo.toml
       - name: Test SDK packages
