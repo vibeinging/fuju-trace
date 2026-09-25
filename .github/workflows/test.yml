@@ -36,8 +36,24 @@ jobs:
           npm ci --prefix fuju-trace-sdk/typescript
           npm ci --prefix fuju-trace-console
           npm ci --prefix fuju-trace-node --omit=optional
-      - name: Run full test suite and crash recovery
-        run: ./scripts/test_all.sh --crash --crash-rounds 3
+      - name: Test Rust engine
+        run: cargo test --offline --manifest-path fuju-trace-engine/Cargo.toml
+      - name: Test SDK packages
+        run: ./scripts/package_mode_eval.sh --skip-node --skip-python-db --skip-rust-db
+      - name: Test Python embedded DB
+        run: ./scripts/package_mode_eval.sh --skip-node --skip-rust-db --skip-sdk
+      - name: Test Rust embedded DB
+        run: ./scripts/package_mode_eval.sh --skip-node --skip-python-db --skip-sdk
+      - name: Test Node embedded DB
+        run: ./scripts/package_mode_eval.sh --skip-python-db --skip-rust-db --skip-sdk
+      - name: Test console
+        run: |
+          npm test --prefix fuju-trace-console
+          npm run build --prefix fuju-trace-console
+      - name: Test crash recovery
+        run: |
+          cargo build -p fuju-trace-engine --example server_durable --release --manifest-path fuju-trace-engine/Cargo.toml
+          ./tests/crash_recovery_kill9.sh 3
       - name: Verify built Python SDK wheel
         run: ./scripts/package_release_artifacts.sh --target python-sdk
       - name: Verify VexDB adapter and pip extra
