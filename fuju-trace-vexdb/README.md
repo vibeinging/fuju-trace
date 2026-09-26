@@ -9,10 +9,10 @@ An optional VexDB backend for Fuju Trace's Python SDK. The core Rust engine and 
 Install the published SDK with its VexDB extra. This installs the adapter and the generic `psycopg2-binary` driver used in the VexDB smoke test:
 
 ```bash
-python -m pip install 'fuju-trace[vexdb]==0.1.10'
+python -m pip install 'fuju-trace[vexdb]==0.1.11'
 ```
 
-If `psycopg2-binary>=2.9.5,<3` is already installed, pip reuses it; this includes AgenticData's pinned 2.9.5. If your deployment supplies another compatible `psycopg2` driver itself, install `fuju-trace-vexdb==0.1.10` without the `driver` extra. From a source checkout, use `python -m pip install -e fuju-trace-sdk/python -e 'fuju-trace-vexdb[driver]'`. The VexDB vendor driver is not required for the tested adapter path.
+If `psycopg2-binary>=2.9.5,<3` is already installed, pip reuses it; this includes AgenticData's pinned 2.9.5. If your deployment supplies another compatible `psycopg2` driver itself, install `fuju-trace-vexdb==0.1.11` without the `driver` extra. From a source checkout, use `python -m pip install -e fuju-trace-sdk/python -e 'fuju-trace-vexdb[driver]'`. The VexDB vendor driver is not required for the tested adapter path.
 
 Set `VEXDB_DSN` locally. Do not commit credentials. Choose the dimension of the embedding model you will use; it becomes part of the table schema. The example uses three dimensions only so it can be run without an embedding service.
 

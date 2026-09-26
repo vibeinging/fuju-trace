@@ -3,18 +3,14 @@ requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "fuju-trace-sql"
+name = "fuju-trace-duckdb"
 version = "0.1.11"
-description = "SQLite, DuckDB and PostgreSQL storage adapters for Fuju Trace"
+description = "DuckDB storage adapter for Fuju Trace"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Fuju Trace" }]
-dependencies = ["fuju-trace==0.1.11"]
-
-[project.optional-dependencies]
-duckdb = ["duckdb>=1.0,<3"]
-postgresql = ["psycopg2-binary>=2.9.5,<3"]
+dependencies = ["fuju-trace-sql==0.1.11", "duckdb>=1.0,<3"]
 
 [project.urls]
 Homepage = "https://github.com/vibeinging/fuju-trace"
@@ -22,4 +18,4 @@ Repository = "https://github.com/vibeinging/fuju-trace"
 Issues = "https://github.com/vibeinging/fuju-trace/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["fuju_trace_sql"]
+packages = ["fuju_trace_duckdb"]

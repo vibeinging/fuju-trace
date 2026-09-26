@@ -26,10 +26,10 @@ def main() -> int:
         env_dir = Path(tmp) / "venv"
         venv.EnvBuilder(with_pip=True).create(env_dir)
         python = env_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        package = f"{sdk_wheels[0].resolve()}[sqlite,duckdb,postgresql]"
+        package = f"{sql_wheels[0].resolve()}[duckdb,postgresql]"
         subprocess.run(
             [str(python), "-m", "pip", "install", "--find-links",
-             str(args.sql_wheel_dir.resolve()), package],
+             str(args.sdk_wheel_dir.resolve()), package],
             check=True,
         )
         subprocess.run([str(python), "-m", "pip", "check"], check=True)

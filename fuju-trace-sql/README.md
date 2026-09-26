@@ -1,17 +1,23 @@
 # Fuju Trace SQL adapters
 
-This package adds three direct database adapters to the Fuju Trace Python
-SDK: SQLite, DuckDB, and PostgreSQL. They have the same event ingestion
+This package holds the shared database implementation for three separately
+installable Fuju Trace packages: `fuju-trace-sqlite`, `fuju-trace-duckdb`, and
+`fuju-trace-postgresql`. It remains directly installable for 0.1.10 users.
+The adapters have the same event ingestion
 and basic read API as the VexDB adapter, but their current text search is a
 portable **substring scan**. They do not provide BM25, ANN, vector writes, or
 hybrid search. Use VexDB or the local TraceDB when those search features matter.
 
-Install an adapter through a Fuju Trace extra:
+Install a backend directly, or through a Fuju Trace extra:
 
 ```bash
-python -m pip install 'fuju-trace[sqlite]==0.1.10'
-python -m pip install 'fuju-trace[duckdb]==0.1.10'
-python -m pip install 'fuju-trace[postgresql]==0.1.10'
+python -m pip install 'fuju-trace-sqlite==0.1.11'
+python -m pip install 'fuju-trace-duckdb==0.1.11'
+python -m pip install 'fuju-trace-postgresql==0.1.11'
+
+python -m pip install 'fuju-trace[sqlite]==0.1.11'
+python -m pip install 'fuju-trace[duckdb]==0.1.11'
+python -m pip install 'fuju-trace[postgresql]==0.1.11'
 ```
 
 ## Install from this checkout
@@ -22,8 +28,10 @@ python -m pip install -e ./fuju-trace-sdk/python -e ./fuju-trace-sql
 python -m pip install 'duckdb>=1.0,<3' 'psycopg2-binary>=2.9.5,<3'
 ```
 
-SQLite uses Python's standard library. The `[duckdb]` and `[postgresql]`
-extras install their respective database drivers.
+SQLite uses Python's standard library. The DuckDB and PostgreSQL packages
+install their respective database drivers. Existing users can still install
+`fuju-trace-sql[duckdb]==0.1.11` or
+`fuju-trace-sql[postgresql]==0.1.11` directly.
 
 ## Connect
 

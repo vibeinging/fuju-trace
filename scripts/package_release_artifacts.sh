@@ -50,7 +50,7 @@ want() {
       return 0
       ;;
     sdk)
-      [[ "$target" == "python-sdk" || "$target" == "python-vexdb" || "$target" == "python-sql" || "$target" == "typescript-sdk" || "$target" == "rust-sdk" || "$target" == "rust-db-source" ]]
+      [[ "$target" == "python-sdk" || "$target" == "python-vexdb" || "$target" == "python-sql" || "$target" == "python-sqlite" || "$target" == "python-duckdb" || "$target" == "python-postgresql" || "$target" == "typescript-sdk" || "$target" == "rust-sdk" || "$target" == "rust-db-source" ]]
       ;;
     native)
       [[ "$target" == "python-db" || "$target" == "node-db" ]]
@@ -110,17 +110,36 @@ if want python-vexdb; then
     --sdk-wheel-dir "$OUT_DIR/python-sdk" --vexdb-wheel-dir "$OUT_DIR/python-vexdb"
 fi
 
-if want python-sql; then
-  echo
-  echo "==> SQL adapter wheel/sdist"
-  run python -m unittest discover -s "$ROOT_DIR/fuju-trace-sql/tests" -p 'test_*.py'
+ensure_python_sql_wheels() {
   if [[ ! -d "$OUT_DIR/python-sdk" ]]; then
     run python -m build "$ROOT_DIR/fuju-trace-sdk/python" --outdir "$OUT_DIR/python-sdk"
   fi
-  run python -m build "$ROOT_DIR/fuju-trace-sql" --outdir "$OUT_DIR/python-sql"
+  if [[ ! -d "$OUT_DIR/python-sql" ]]; then
+    run python -m build "$ROOT_DIR/fuju-trace-sql" --outdir "$OUT_DIR/python-sql"
+  fi
+}
+
+if want python-sql; then
+  echo
+  echo "==> SQL shared adapter wheel/sdist"
+  run python -m unittest discover -s "$ROOT_DIR/fuju-trace-sql/tests" -p 'test_*.py'
+  ensure_python_sql_wheels
   run python "$ROOT_DIR/scripts/verify_python_sql_consumer.py" \
     --sdk-wheel-dir "$OUT_DIR/python-sdk" --sql-wheel-dir "$OUT_DIR/python-sql"
 fi
+
+for backend in sqlite duckdb postgresql; do
+  if want "python-$backend"; then
+    echo
+    echo "==> $backend adapter wheel/sdist"
+    ensure_python_sql_wheels
+    run python -m build "$ROOT_DIR/fuju-trace-$backend" --outdir "$OUT_DIR/python-$backend"
+    run python "$ROOT_DIR/scripts/verify_python_backend_consumer.py" \
+      --backend "$backend" --sdk-wheel-dir "$OUT_DIR/python-sdk" \
+      --sql-wheel-dir "$OUT_DIR/python-sql" \
+      --backend-wheel-dir "$OUT_DIR/python-$backend"
+  fi
+done
 
 if want python-db; then
   echo

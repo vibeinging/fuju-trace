@@ -7,7 +7,8 @@ Fuju Trace provides tracing SDKs, a VexDB adapter, and an embedded local TraceDB
 - `fuju-trace-engine/`: standard-library-only Rust engine, WAL, folding, text/vector search.
 - `fuju-trace-sdk/python/`, `typescript/`, `rust/`: instrumentation SDKs.
 - `fuju-trace-vexdb/`: optional VexDB adapter, using a compatible `psycopg2` driver.
-- `fuju-trace-sql/`: source-only SQLite, DuckDB, and PostgreSQL adapters; currently substring text search without native vector support.
+- `fuju-trace-sql/`: shared SQLite, DuckDB, and PostgreSQL storage implementation; currently substring text search without native vector support.
+- `fuju-trace-sqlite/`, `fuju-trace-duckdb/`, `fuju-trace-postgresql/`: independently installable Python backend packages using the shared SQL implementation.
 - `fuju-trace-db-python/`, `fuju-trace-node/`, `fuju-trace-db-rs/`: embedded bindings.
 - `docs/CURRENT_STATE.md`: current features and limits.
 

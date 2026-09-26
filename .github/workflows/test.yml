@@ -67,7 +67,7 @@ jobs:
         run: ./scripts/package_release_artifacts.sh --target python-sdk
       - name: Verify VexDB adapter and pip extra
         run: ./scripts/package_release_artifacts.sh --target python-vexdb
-      - name: Test SQL adapters and verify built wheels
+      - name: Test SQL adapters and verify all backend wheels
         env:
           POSTGRESQL_DSN: host=127.0.0.1 port=5432 dbname=fuju_trace_test user=fuju_test password=fuju_test
         run: |
@@ -75,3 +75,6 @@ jobs:
           python -m unittest discover -s fuju-trace-sql/tests -p 'test_*.py'
           python fuju-trace-sql/tests/live_smoke.py
           ./scripts/package_release_artifacts.sh --target python-sql
+          ./scripts/package_release_artifacts.sh --target python-sqlite
+          ./scripts/package_release_artifacts.sh --target python-duckdb
+          ./scripts/package_release_artifacts.sh --target python-postgresql

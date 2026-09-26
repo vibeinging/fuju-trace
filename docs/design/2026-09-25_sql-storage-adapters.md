@@ -4,7 +4,7 @@
 
 ## 目标
 
-让已经使用 SQLite、DuckDB 或 PostgreSQL 的 Python 应用直接保存和查询 Fuju Trace，不必部署独立 Trace 服务。三个入口共用 `fuju-trace-sql` 的事件模型和读写接口；数据库驱动按需安装。MySQL 暂不支持。已发布的 0.1.9 PyPI 包不包含这些新入口。
+让已经使用 SQLite、DuckDB 或 PostgreSQL 的 Python 应用直接保存和查询 Fuju Trace，不必部署独立 Trace 服务。自 0.1.11 起，三个入口分别用 `fuju-trace-sqlite`、`fuju-trace-duckdb`、`fuju-trace-postgresql` 安装，共用 `fuju-trace-sql` 的事件模型和读写接口；数据库驱动按需安装。旧的 `fuju-trace-sql` 安装方式仍有效。MySQL 暂不支持。
 
 ## 数据与事务
 

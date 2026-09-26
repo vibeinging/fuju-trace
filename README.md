@@ -20,7 +20,7 @@ Technical properties of this release:
 Requires Python 3.10 or later:
 
 ```bash
-python -m pip install 'fuju-trace[vexdb]==0.1.10'
+python -m pip install 'fuju-trace[vexdb]==0.1.11'
 ```
 
 ```python
@@ -47,7 +47,7 @@ with connect(vexdb_params=params, tenant_id=1, vector_dim=384,
 
 Set `vector_dim` to your embedding model's actual dimension; `384` is a placeholder. `initialize=True` creates tables and indexes on first use and requires DDL permissions. Later opens may omit it. You can also pass a securely managed `vexdb_dsn`. See the [adapter guide](fuju-trace-vexdb/README.md) for connection parameters, session reads, and text-only use.
 
-The extra installs `fuju-trace-vexdb` and the generic `psycopg2-binary>=2.9.5,<3` driver. Pip reuses a compatible installed version. If your application supplies a compatible `psycopg2` driver, install `fuju-trace-vexdb==0.1.10` separately.
+The extra installs `fuju-trace-vexdb` and the generic `psycopg2-binary>=2.9.5,<3` driver. Pip reuses a compatible installed version. If your application supplies a compatible `psycopg2` driver, install `fuju-trace-vexdb==0.1.11` separately.
 
 ## Choose a write and query path
 
@@ -73,19 +73,19 @@ Replace the VexDB `connect(...)` call above with `connect(path="./trace-data", t
 
 ## SQLite, DuckDB, and PostgreSQL adapters
 
-The three SQL adapters install through `fuju-trace[sqlite]`, `fuju-trace[duckdb]`, or `fuju-trace[postgresql]`. They share idempotent events, transactional span folding, tenant isolation, session/trace reads, and exact attribute filters. Text search currently uses a `LIKE` substring scan; there is **no BM25 or vector search**. Measure query time on your data before using it at scale. Choose VexDB when native BM25 and vector search are required.
+Each SQL backend has its own package: `fuju-trace-sqlite`, `fuju-trace-duckdb`, and `fuju-trace-postgresql`. Install one directly, or use the matching `fuju-trace[sqlite]`, `[duckdb]`, or `[postgresql]` extra. All three use `fuju-trace-sql` for shared storage logic; the SQL package remains installable for existing users. They share idempotent events, transactional span folding, tenant isolation, session/trace reads, and exact attribute filters. Text search currently uses a `LIKE` substring scan; there is **no BM25 or vector search**. Measure query time on your data before using it at scale. Choose VexDB when native BM25 and vector search are required.
 
-| Database | Connection form | Typical use |
-| --- | --- | --- |
-| SQLite | `connect(sqlite_path="./trace.sqlite", tenant_id=1, initialize=True)` | Single-host file database |
-| DuckDB | `connect(duckdb_path="./trace.duckdb", tenant_id=1, initialize=True)` | Local analytics with one writer process |
-| PostgreSQL | `connect(postgresql_dsn="...", tenant_id=1, initialize=True)` | Services with an existing PostgreSQL instance |
+| Database | Direct package | Connection form | Typical use |
+| --- | --- | --- | --- |
+| SQLite | `fuju-trace-sqlite` | `connect(sqlite_path="./trace.sqlite", tenant_id=1, initialize=True)` | Single-host file database |
+| DuckDB | `fuju-trace-duckdb` | `connect(duckdb_path="./trace.duckdb", tenant_id=1, initialize=True)` | Local analytics with one writer process |
+| PostgreSQL | `fuju-trace-postgresql` | `connect(postgresql_dsn="...", tenant_id=1, initialize=True)` | Services with an existing PostgreSQL instance |
 
 See the [SQL adapter guide](fuju-trace-sql/README.md) for source installation and drivers. SQLite and DuckDB have real file database tests. PostgreSQL has been tested with a temporary local PostgreSQL 16 instance; CI is configured to repeat it against a disposable service database. MySQL is outside the current support scope.
 
 ## Release and verification
 
-Version 0.1.10 includes `fuju-trace`, `fuju-trace-vexdb`, and `fuju-trace-sql` on PyPI. Install the needed extra from the base SDK. The [0.1.9 release report](docs/reports/2026-09-25_serverless-python-release.md) and [SQL real database test report](docs/reports/2026-09-25_sql-adapter-real-tests.md) record the verification scope.
+Version 0.1.11 includes the base SDK, VexDB adapter, shared SQL implementation, and three separately named SQL backend packages on PyPI. Install a direct backend package or the matching base SDK extra. The [SQL real database test report](docs/reports/2026-09-25_sql-adapter-real-tests.md) records the storage verification scope.
 
 [Python SDK](fuju-trace-sdk/python/README.md) · [VexDB adapter](fuju-trace-vexdb/README.md) · [Development notes](AGENTS.md) · [MIT license](LICENSE)
 
