@@ -2,15 +2,17 @@
 
 这份文档用于在自己的 Python 项目里试用 `fuju-trace-vexdb`。它把 Fuju Trace 的事件写入 VexDB，并用 VexDB 的全文索引和向量索引查询。发布版支持通过 PyPI 安装；本地联调包仍可离线安装。
 
+目前完整发布的 PyPI 版本是 0.1.10。安装新版本前请看 [0.1.11 发版状态](../docs/reports/2026-09-26_python-0.1.11-release.md)。
+
 ## 1. 安装
 
 从 PyPI 安装（Python 3.10 或更新版本）：
 
 ```bash
-python -m pip install 'fuju-trace[vexdb]==0.1.11'
+python -m pip install 'fuju-trace[vexdb]==0.1.10'
 ```
 
-这条命令会安装 `fuju-trace` SDK、`fuju-trace-vexdb` 适配器和通用 `psycopg2-binary` 驱动。当前 VexDB 联调使用过普通 `psycopg2`；不需要专用的 `vexdb-psycopg2`。如果环境已有符合 `>=2.9.5,<3` 的 `psycopg2-binary`，pip 会复用已有版本；例如 AgenticData 固定的 `2.9.5` 无须升级。如果你的环境已经提供其他兼容的 `psycopg2` 驱动，可只安装 `fuju-trace-vexdb==0.1.11`，由它自动安装 SDK。
+这条命令会安装 `fuju-trace` SDK、`fuju-trace-vexdb` 适配器和通用 `psycopg2-binary` 驱动。当前 VexDB 联调使用过普通 `psycopg2`；不需要专用的 `vexdb-psycopg2`。如果环境已有符合 `>=2.9.5,<3` 的 `psycopg2-binary`，pip 会复用已有版本；例如 AgenticData 固定的 `2.9.5` 无须升级。如果你的环境已经提供其他兼容的 `psycopg2` 驱动，可只安装 `fuju-trace-vexdb==0.1.10`，由它自动安装对应版本的 SDK。
 
 拿到原来的 `dist/local-vexdb-0.1.9/` 联调包时，也可离线安装两个 wheel：
 

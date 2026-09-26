@@ -2,7 +2,9 @@
 
 Fuju Trace 记录 AI Agent 的执行过程，并让应用直接查询这些记录。SDK 把一次运行拆成 trace、span 和事件；存储适配器可写入 **VexDB**、本地 TraceDB、SQLite、DuckDB 或 PostgreSQL。当前项目不提供独立 HTTP/OTLP 服务或 Web 控制台。
 
-[English](README.md) · [VexDB 连接参数](fuju-trace-vexdb/README.zh-CN.md) · [当前实现范围](docs/CURRENT_STATE.md)
+[English](README.md) · [VexDB 连接参数](fuju-trace-vexdb/README.zh-CN.md) · [当前实现范围](docs/CURRENT_STATE.md) · [0.1.11 发版状态](docs/reports/2026-09-26_python-0.1.11-release.md)
+
+**当前可完整安装的 PyPI 版本是 0.1.10。** 0.1.11 的源码和标签已经包含三个独立命名的 SQL 插件，但 PyPI 发布还未完成。在[发版记录](docs/reports/2026-09-26_python-0.1.11-release.md)确认六个包都已发布之前，请使用下面的 0.1.10 安装命令。
 
 ## 为什么用 Trace
 
@@ -20,7 +22,7 @@ Fuju Trace 记录 AI Agent 的执行过程，并让应用直接查询这些记�
 Python 3.10 或更新版本：
 
 ```bash
-python -m pip install 'fuju-trace[vexdb]==0.1.11'
+python -m pip install 'fuju-trace[vexdb]==0.1.10'
 ```
 
 ```python
@@ -47,7 +49,7 @@ with connect(vexdb_params=params, tenant_id=1, vector_dim=384,
 
 `vector_dim` 要与将来使用的 embedding 模型维度一致；示例的 `384` 只是占位值。首次运行的 `initialize=True` 会建表和索引，账号需要相应权限。后续使用同一套表时可省略。已有安全管理的 DSN 也可以传 `vexdb_dsn=os.environ["VEXDB_DSN"]`。详细的连接参数、会话读取和无向量场景见 [VexDB 接入文档](fuju-trace-vexdb/README.zh-CN.md)。
 
-安装 extra 会带上 `fuju-trace-vexdb` 和通用 `psycopg2-binary>=2.9.5,<3`；已有兼容版本会被复用。若项目自行提供兼容的 `psycopg2` 驱动，可单独安装 `fuju-trace-vexdb==0.1.11`。
+安装 extra 会带上 `fuju-trace-vexdb` 和通用 `psycopg2-binary>=2.9.5,<3`；已有兼容版本会被复用。若项目自行提供兼容的 `psycopg2` 驱动，可分别安装 `fuju-trace==0.1.10` 和 `fuju-trace-vexdb==0.1.10`。
 
 ## 写入与查询怎么选
 
@@ -73,9 +75,17 @@ python -m pip install -e ./fuju-trace-sdk/python -e ./fuju-trace-db-python
 
 ## SQLite、DuckDB、PostgreSQL 插件
 
-三个数据库现在各有独立安装包：`fuju-trace-sqlite`、`fuju-trace-duckdb`、`fuju-trace-postgresql`。也可通过 `fuju-trace[sqlite]`、`fuju-trace[duckdb]`、`fuju-trace[postgresql]` 安装。它们依赖共用实现 `fuju-trace-sql`；原来的 SQL 包仍可直接安装。三个后端共用事件幂等、事务内折叠、租户隔离、会话/Trace 点读和精确属性过滤；文本查询暂用数据库 `LIKE` 子串匹配，**没有 BM25 或向量检索**。大数据量检索请先评估查询耗时；需要原生 BM25 和向量检索时选 VexDB。
+当前 PyPI 完整版本通过共用的 `fuju-trace-sql` 包支持三个数据库。按所选数据库安装对应的 extra：
 
-| 数据库 | 独立安装包 | 连接参数 | 适合的场景 |
+```bash
+python -m pip install 'fuju-trace[sqlite]==0.1.10'
+python -m pip install 'fuju-trace[duckdb]==0.1.10'
+python -m pip install 'fuju-trace[postgresql]==0.1.10'
+```
+
+0.1.11 源码增加了三个独立安装包：`fuju-trace-sqlite`、`fuju-trace-duckdb`、`fuju-trace-postgresql`。`fuju-trace-sql` 是共用实现，也保留旧安装方式；三个独立包依赖它。等 0.1.11 的 PyPI 发布完成后，可以直接安装对应数据库包，或通过 `fuju-trace[sqlite]`、`fuju-trace[duckdb]`、`fuju-trace[postgresql]` 安装。DuckDB 包带 `duckdb` 驱动，PostgreSQL 包带 `psycopg2-binary`，SQLite 使用 Python 标准库。三个后端共用事件幂等、事务内折叠、租户隔离、会话/Trace 点读和精确属性过滤；文本查询暂用数据库 `LIKE` 子串匹配，**没有 BM25 或向量检索**。大数据量检索请先评估查询耗时；需要原生 BM25 和向量检索时选 VexDB。
+
+| 数据库 | 0.1.11 的独立安装包 | 连接参数 | 适合的场景 |
 | --- | --- | --- | --- |
 | SQLite | `fuju-trace-sqlite` | `connect(sqlite_path="./trace.sqlite", tenant_id=1, initialize=True)` | 单机应用，文件型数据库 |
 | DuckDB | `fuju-trace-duckdb` | `connect(duckdb_path="./trace.duckdb", tenant_id=1, initialize=True)` | 单进程写入、偏分析的本地应用 |
@@ -85,7 +95,7 @@ python -m pip install -e ./fuju-trace-sdk/python -e ./fuju-trace-db-python
 
 ## 发布与验证
 
-0.1.11 在 PyPI 发布基础 SDK、VexDB 适配器、SQL 共用实现及三个独立数据库插件。可直接安装数据库插件，也可使用基础 SDK 的 extra。[SQL 真实库测试报告](docs/reports/2026-09-25_sql-adapter-real-tests.md)记录了存储验证范围。
+0.1.10 是目前 **完整发布** 的 PyPI 版本。0.1.11 的代码和 CI 已准备好，但 PyPI 目前只收到了 `fuju-trace-sqlite` 0.1.11；DuckDB、PostgreSQL 的新包名需要等待 PyPI 的新项目创建额度恢复。基础 SDK、VexDB 插件和 SQL 共用实现仍是 PyPI 上的 0.1.10。安装新版本前请先看 [0.1.11 发版记录](docs/reports/2026-09-26_python-0.1.11-release.md)。[SQL 真实库测试报告](docs/reports/2026-09-25_sql-adapter-real-tests.md)记录了存储验证范围。
 
 [Python SDK](fuju-trace-sdk/python/README.md) · [VexDB 适配器](fuju-trace-vexdb/README.zh-CN.md) · [仓库结构与开发约定](AGENTS.md) · [MIT 许可](LICENSE)
 

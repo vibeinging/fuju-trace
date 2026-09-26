@@ -1,5 +1,7 @@
 # Fuju Trace SQLite
 
+The 0.1.11 PyPI rollout is in progress. Check the [release status](../docs/reports/2026-09-26_python-0.1.11-release.md) before using the install command: this package also needs `fuju-trace-sql==0.1.11`.
+
 SQLite storage adapter for Fuju Trace. Install this package directly or use
 the base SDK extra:
 

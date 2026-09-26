@@ -8,17 +8,19 @@ and basic read API as the VexDB adapter, but their current text search is a
 portable **substring scan**. They do not provide BM25, ANN, vector writes, or
 hybrid search. Use VexDB or the local TraceDB when those search features matter.
 
-Install a backend directly, or through a Fuju Trace extra:
+The latest complete PyPI release is 0.1.10. Install the matching backend extra:
 
 ```bash
-python -m pip install 'fuju-trace-sqlite==0.1.11'
-python -m pip install 'fuju-trace-duckdb==0.1.11'
-python -m pip install 'fuju-trace-postgresql==0.1.11'
-
-python -m pip install 'fuju-trace[sqlite]==0.1.11'
-python -m pip install 'fuju-trace[duckdb]==0.1.11'
-python -m pip install 'fuju-trace[postgresql]==0.1.11'
+python -m pip install 'fuju-trace[sqlite]==0.1.10'
+python -m pip install 'fuju-trace[duckdb]==0.1.10'
+python -m pip install 'fuju-trace[postgresql]==0.1.10'
 ```
+
+The 0.1.11 source adds direct packages named `fuju-trace-sqlite`,
+`fuju-trace-duckdb`, and `fuju-trace-postgresql`; they depend on this shared
+implementation. Wait for the [0.1.11 release report](../docs/reports/2026-09-26_python-0.1.11-release.md)
+to confirm that all packages are on PyPI before installing them or using the
+0.1.11 SDK extras.
 
 ## Install from this checkout
 
@@ -30,8 +32,8 @@ python -m pip install 'duckdb>=1.0,<3' 'psycopg2-binary>=2.9.5,<3'
 
 SQLite uses Python's standard library. The DuckDB and PostgreSQL packages
 install their respective database drivers. Existing users can still install
-`fuju-trace-sql[duckdb]==0.1.11` or
-`fuju-trace-sql[postgresql]==0.1.11` directly.
+`fuju-trace-sql[duckdb]==0.1.10` or
+`fuju-trace-sql[postgresql]==0.1.10` directly.
 
 ## Connect
 

@@ -4,15 +4,17 @@
 
 An optional VexDB backend for Fuju Trace's Python SDK. The core Rust engine and the normal Python SDK do not depend on VexDB. This adapter stores the SDK's original events and a folded span read model in VexDB. Native `fulltext`/BM25 and `graph_index` perform the two search branches; Fuju Trace combines their ranks with RRF.
 
+The latest complete PyPI release is 0.1.10. Check the [0.1.11 release status](../docs/reports/2026-09-26_python-0.1.11-release.md) before installing the next version.
+
 ## Install and connect
 
 Install the published SDK with its VexDB extra. This installs the adapter and the generic `psycopg2-binary` driver used in the VexDB smoke test:
 
 ```bash
-python -m pip install 'fuju-trace[vexdb]==0.1.11'
+python -m pip install 'fuju-trace[vexdb]==0.1.10'
 ```
 
-If `psycopg2-binary>=2.9.5,<3` is already installed, pip reuses it; this includes AgenticData's pinned 2.9.5. If your deployment supplies another compatible `psycopg2` driver itself, install `fuju-trace-vexdb==0.1.11` without the `driver` extra. From a source checkout, use `python -m pip install -e fuju-trace-sdk/python -e 'fuju-trace-vexdb[driver]'`. The VexDB vendor driver is not required for the tested adapter path.
+If `psycopg2-binary>=2.9.5,<3` is already installed, pip reuses it; this includes AgenticData's pinned 2.9.5. If your deployment supplies another compatible `psycopg2` driver itself, install `fuju-trace-vexdb==0.1.10` without the `driver` extra; it installs the matching SDK. From a source checkout, use `python -m pip install -e fuju-trace-sdk/python -e 'fuju-trace-vexdb[driver]'`. The VexDB vendor driver is not required for the tested adapter path.
 
 Set `VEXDB_DSN` locally. Do not commit credentials. Choose the dimension of the embedding model you will use; it becomes part of the table schema. The example uses three dimensions only so it can be run without an embedding service.
 
@@ -75,4 +77,4 @@ python fuju-trace-vexdb/bench/bench_vexdb.py --spans 1000 --single-spans 0 \
   --batch 128 --embedding-batch 128 --queries 20 --report /tmp/fuju-vexdb-bench.json
 ```
 
-The [measured 1000-span report](../docs/reports/2026-09-25_fuju-trace-vexdb-performance.md) preserves the original baseline and the optimized runs, with raw JSON for each stage. It includes write throughput, BM25/vector/hybrid latency, recall, and index plans. These are remote Python-client measurements on a synthetic corpus, not VexDB engine-only results. Synchronous single-event ingest remains much slower than batched ingest.
+The benchmark writes its raw results to the path passed with `--report`. These are remote Python-client measurements on a synthetic corpus, not VexDB engine-only results. Measure write throughput, BM25/vector/hybrid latency, recall, and index plans on your own VexDB instance; compare synchronous and batched ingest for your workload.

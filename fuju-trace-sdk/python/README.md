@@ -2,10 +2,12 @@
 
 Python 3.8+ SDK for Agent traces. It emits deterministic events and writes them through an Exporter. The base package uses only the Python standard library.
 
+The latest complete PyPI release is 0.1.10. The [0.1.11 release](../../docs/reports/2026-09-26_python-0.1.11-release.md) is still in progress; use the install commands below until it is complete.
+
 ## VexDB
 
 ```bash
-pip install 'fuju-trace[vexdb]==0.1.11'
+pip install 'fuju-trace[vexdb]==0.1.10'
 ```
 
 ```python
@@ -26,19 +28,21 @@ The VexDB adapter also accepts `vexdb_params={...}`. `384` is an example: `vecto
 
 ## SQLite, DuckDB, and PostgreSQL
 
-`fuju-trace-sql` provides three direct database adapters for Python 3.10+:
+For Python 3.10+, the 0.1.10 SQL extras select the three database adapters:
 
 ```bash
-python -m pip install 'fuju-trace[sqlite]==0.1.11'
-python -m pip install 'fuju-trace[duckdb]==0.1.11'
-python -m pip install 'fuju-trace[postgresql]==0.1.11'
+python -m pip install 'fuju-trace[sqlite]==0.1.10'
+python -m pip install 'fuju-trace[duckdb]==0.1.10'
+python -m pip install 'fuju-trace[postgresql]==0.1.10'
 ```
 
 Use `connect(sqlite_path=...)`, `connect(duckdb_path=...)`, or `connect(postgresql_dsn=...)`. The same `DbExporter` and `Tracer` work with these stores. Their current search is a substring scan, with no BM25 or vector support. See [SQL adapter guide](../../fuju-trace-sql/README.md) for drivers, code, and limits.
 
-The extras install the separately named `fuju-trace-sqlite`, `fuju-trace-duckdb`,
-and `fuju-trace-postgresql` packages. Each can also be installed directly at
-version 0.1.11; they share `fuju-trace-sql` as the implementation package.
+In the 0.1.11 source, these extras instead install the separately named
+`fuju-trace-sqlite`, `fuju-trace-duckdb`, and `fuju-trace-postgresql` packages.
+Each depends on the shared `fuju-trace-sql` implementation. Wait until the
+[release report](../../docs/reports/2026-09-26_python-0.1.11-release.md)
+confirms that all packages are available before using the 0.1.11 extras.
 
 ## Local embedded DB
 
